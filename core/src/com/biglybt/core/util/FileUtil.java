@@ -71,6 +71,8 @@ public class FileUtil {
 
   private static final FileHandler fileHandling;
 
+  private static AEDiagnosticsLogger file_logger;
+  
   static {
 
 	  try
@@ -106,18 +108,23 @@ public class FileUtil {
 		 
 		  		// on Windows we get a true if they differ in case :(
 		  
-	    	if ( 	f1.getParent().equals( f2.getParent()) &&
-	    			!f1.getName().equals( f2.getName()) && 
-	    			f1.getName().equalsIgnoreCase( f2.getName())){
-	    		
-	    		return( false );
-	    		
-	    	}else{
-	    		
-	    		return( true );
-	    	}
-	  }else{
+		  String p1 = f1.getParent();
+		  String p2 = f2.getParent();
 		  
+		  boolean same_parent = p1 == p2 || ( p1 != null && p1.equals( p2 ));
+
+		  if ( 	same_parent &&
+				!f1.getName().equals( f2.getName()) && 
+				f1.getName().equalsIgnoreCase( f2.getName())){
+
+			  return( false );
+
+		  }else{
+
+			  return( true );
+		  }
+	  }else{
+
 		  return( false );
 	  }
   }
@@ -3040,6 +3047,38 @@ public class FileUtil {
 			return( false );
 		}
 	}
+	
+	public static void
+	log(
+		String		str )
+	{
+		log( str, null );
+	}
+	
+	public static void
+	log(
+		String		str, 
+		Throwable	error )
+	{
+		synchronized( FileUtil.class ){
+			
+			if ( file_logger == null ){
+				
+				file_logger = AEDiagnostics.getLogger( "DiskOps" );
+				
+				file_logger.enableTimeStamp( true );
+				
+				file_logger.setForced( true );
+			}
+		}
+		
+		file_logger.log( str );
+		
+		if ( error != null ){
+			file_logger.log(error );
+		}
+	}
+	
 		/**
 		 * Gets the encoding that should be used when writing script files (currently only
 		 * tested for windows as this is where an issue can arise...)
