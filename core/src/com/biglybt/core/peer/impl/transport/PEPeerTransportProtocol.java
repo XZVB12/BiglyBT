@@ -255,11 +255,36 @@ implements PEPeerTransport
 
 	private int upload_priority_auto;
 
-	private static final class DisconnectedTransportQueue extends LinkedHashMap
+	private static final class DisconnectedTransportQueue extends LinkedHashMap<HashWrapper,DisconnectedTransportQueue.QueueEntry>
 	{
 		public DisconnectedTransportQueue()
 		{
 			super(20,0.75F);
+			
+			DisconnectedTransportQueue queue = this;
+			
+			SimpleTimer.addPeriodicEvent( "dtw:cleaner", 60*1000, (ev)->{
+				
+				synchronized( queue ){
+					Iterator<QueueEntry> it = values().iterator();
+
+					long now = SystemTime.getMonotonousTime();
+
+					while(it.hasNext()){
+						
+						QueueEntry eldest = it.next();
+						
+						if( now - eldest.addTime > MAX_CACHE_AGE){
+							
+							it.remove();
+							
+						}else{
+							
+							break;
+						}
+					}
+				}
+			});
 		}
 
 		private static final long MAX_CACHE_AGE = 2*60*1000;
@@ -269,13 +294,13 @@ implements PEPeerTransport
 		private void performCleaning() {
 			if(size() > 20)
 			{
-				Iterator it = values().iterator();
+				Iterator<QueueEntry> it = values().iterator();
 
 				long now = SystemTime.getMonotonousTime();
 
 				while(it.hasNext() && size() > 20)
 				{
-					QueueEntry eldest = (QueueEntry)it.next();
+					QueueEntry eldest = it.next();
 					if( now - eldest.addTime > MAX_CACHE_AGE){
 						it.remove();
 					}else{
@@ -297,7 +322,7 @@ implements PEPeerTransport
 
 		// hardcap at 100
 		@Override
-		protected boolean removeEldestEntry(Map.Entry eldest) {
+		protected boolean removeEldestEntry(Map.Entry<HashWrapper,QueueEntry> eldest) {
 			return size() > 100;
 		}
 
@@ -308,7 +333,7 @@ implements PEPeerTransport
 
 		synchronized public PEPeerTransportProtocol remove(HashWrapper key) {
 			performCleaning();
-			QueueEntry entry = (QueueEntry)super.remove(key);
+			QueueEntry entry = super.remove(key);
 			if(entry != null)
 				return entry.transport;
 			else
@@ -1130,7 +1155,7 @@ implements PEPeerTransport
 		sha1.update(sessionSecret);
 		sha1.update(manager.getTargetHash());
 		sha1.update(getIp().getBytes());
-		mySessionID = sha1.getHash();
+		mySessionID = new HashWrapper(sha1.getDigest());
 		checkForReconnect(mySessionID);
 	}
 
@@ -1202,10 +1227,12 @@ implements PEPeerTransport
 		String client_name = (String)ClientIDManagerImpl.getSingleton().getProperty(  manager.getTargetHash(), ClientIDGenerator.PR_CLIENT_NAME );
 		int localTcpPort = manager.getTCPListeningPortNumber();
 		String tcpPortOverride = COConfigurationManager.getStringParameter("TCP.Listen.Port.Override");
-		try
-		{
-			localTcpPort = Integer.parseInt(tcpPortOverride);
+		try{
+			if ( !tcpPortOverride.isEmpty()){
+				localTcpPort = Integer.parseInt(tcpPortOverride);
+			}
 		} catch (NumberFormatException e)	{} // ignore as invalid input
+		
 		boolean require_crypto = NetworkManager.getCryptoRequired( manager.getAdapter().getCryptoLevel());
 
 		Map data_dict = new HashMap();
@@ -1272,11 +1299,11 @@ implements PEPeerTransport
 		int local_udp2_port = UDPNetworkManager.getSingleton().getUDPNonDataListeningPortNumber();
 		String tcpPortOverride = COConfigurationManager.getStringParameter("TCP.Listen.Port.Override");
 
-		try
-		{
-			local_tcp_port = Integer.parseInt(tcpPortOverride);
-		} catch (NumberFormatException e)
-		{} // ignore as invalid input
+		try{
+			if ( !tcpPortOverride.isEmpty()){
+				local_tcp_port = Integer.parseInt(tcpPortOverride);
+			}
+		} catch (NumberFormatException e){} // ignore as invalid input
 
 		boolean require_crypto = NetworkManager.getCryptoRequired(manager.getAdapter().getCryptoLevel());
 
@@ -4883,6 +4910,13 @@ implements PEPeerTransport
 		}
 	}
 
+	@Override
+	public NetworkConnectionBase
+	getNetworkConnection()
+	{
+		return( connection );
+	}
+	
 	@Override
 	public Connection getPluginConnection() {
 		return plugin_connection;

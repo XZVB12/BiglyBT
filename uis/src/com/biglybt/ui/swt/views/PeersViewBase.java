@@ -1,5 +1,6 @@
 package com.biglybt.ui.swt.views;
 
+import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.util.List;
 import java.util.*;
@@ -26,6 +27,7 @@ import com.biglybt.core.networkmanager.NetworkManager;
 import com.biglybt.core.networkmanager.admin.NetworkAdmin;
 import com.biglybt.core.peer.PEPeer;
 import com.biglybt.core.peer.PEPeerManager;
+import com.biglybt.core.peer.util.PeerUtils;
 import com.biglybt.core.speedmanager.SpeedLimitHandler;
 import com.biglybt.core.tag.TagGroup;
 import com.biglybt.core.util.*;
@@ -618,6 +620,8 @@ PeersViewBase
 		long	maxUp				= 0;
 
 		boolean onlyMyPeer = true;
+		boolean hasIPv4 = false;
+		boolean hasIPv6 = false;
 		
 		if ( hasSelection ){
 			GlobalManager gm = CoreFactory.getSingleton().getGlobalManager();
@@ -627,6 +631,28 @@ PeersViewBase
 
 				if ( !peer.isMyPeer()){
 					onlyMyPeer = false;
+					
+					String ip = peer.getIp();
+					
+					if ( ip.indexOf( "." ) != -1 ){
+						hasIPv4 = true;
+					}else{
+						hasIPv6 = true;
+					}
+					
+					InetAddress alt = peer.getAlternativeIPv6();
+					
+					if ( alt != null ){
+						
+						if ( alt instanceof Inet4Address ){
+							
+							hasIPv4 = true;
+							
+						}else{
+							
+							hasIPv6 = true;
+						}
+					}
 				}
 				PEPeerManager m = peer.getManager();
 
@@ -789,7 +815,7 @@ PeersViewBase
 		
 						if ( dm != null ){
 							
-							bp.setPartialBuddy( PluginCoreUtils.wrap( dm ), p_peer, sel );
+							bp.setPartialBuddy( PluginCoreUtils.wrap( dm ), p_peer, sel, true );
 						}
 					}
 				}
@@ -875,20 +901,103 @@ PeersViewBase
 		
 		kick_item.setEnabled( !onlyMyPeer );
 
-		final MenuItem ban_item = new MenuItem(menu, SWT.PUSH);
+		final MenuItem ban_item;
+		
+		if ( hasIPv4 && hasIPv6 ){
+		
+			final Menu ban_menu = new Menu( menu.getShell(), SWT.DROP_DOWN);
 
-		Messages.setLanguageText(ban_item, "PeersView.menu.kickandban");
-		ban_item.addListener(SWT.Selection, new PeersRunner(peers) {
-			@Override
-			public void run(PEPeer peer) {
-				if ( !peer.isMyPeer()){
-					String msg = MessageText.getString("PeersView.menu.kickandban.reason");
-					IpFilterManagerFactory.getSingleton().getIPFilter().ban(peer.getIp(),
-							msg, true );
-					peer.getManager().removePeer(peer, "Peer kicked and banned");
+			ban_item = new MenuItem( menu, SWT.CASCADE);
+
+			ban_item.setMenu( ban_menu );
+			
+			Messages.setLanguageText( ban_item, "PeersView.menu.kickandban" );
+
+			MenuItem ban_v4_item = new MenuItem( ban_menu, SWT.PUSH );
+			
+			ban_v4_item.setText( "IPv4" );
+			
+			MenuItem ban_v6_item = new MenuItem( ban_menu, SWT.PUSH );
+			
+			ban_v6_item.setText( "IPv6" );
+			
+			MenuItem ban_v4v6_item = new MenuItem( ban_menu, SWT.PUSH );
+			
+			ban_v4v6_item.setText( "IPv4 + IPv6" );
+			
+			Listener l = new PeersRunner(peers) {
+				@Override
+				public void run( Event e, PEPeer peer) {
+					if ( !peer.isMyPeer()){
+						String msg = MessageText.getString("PeersView.menu.kickandban.reason");
+						
+						boolean v4 = e.widget==ban_v4_item||e.widget==ban_v4v6_item;
+						boolean v6 = e.widget==ban_v6_item||e.widget==ban_v4v6_item;
+						
+						String ip = peer.getIp();
+						
+						InetAddress ia = peer.getAlternativeIPv6();
+						
+						boolean do_ip;
+						
+						if ( ip.indexOf( '.' ) != -1 ){
+															
+							do_ip = v4;
+							
+						}else{
+							
+							do_ip = v6;
+						}
+						
+						if ( do_ip ){
+											
+							IpFilterManagerFactory.getSingleton().getIPFilter().ban( ip, msg, true );
+						}
+						
+						if ( ia != null ){
+							
+							boolean do_ia;
+							
+							if ( ia instanceof Inet4Address ){
+																
+								do_ia = v4;
+								
+							}else{
+								
+								do_ia = v6;
+							}
+							
+							if ( do_ia ){
+												
+								IpFilterManagerFactory.getSingleton().getIPFilter().ban( ia.getHostAddress(), msg, true );
+							}
+						}
+							
+						peer.getManager().removePeer(peer, "Peer kicked and banned");
+					}
 				}
-			}
-		});
+			};
+			
+			ban_v4_item.addListener( SWT.Selection, l );
+			ban_v6_item.addListener( SWT.Selection, l );
+			ban_v4v6_item.addListener( SWT.Selection, l );
+		}else{
+			
+			ban_item = new MenuItem(menu, SWT.PUSH);
+
+			Messages.setLanguageText(ban_item, "PeersView.menu.kickandban");
+			ban_item.addListener(SWT.Selection, new PeersRunner(peers) {
+				@Override
+				public void run(PEPeer peer) {
+					if ( !peer.isMyPeer()){
+						String msg = MessageText.getString("PeersView.menu.kickandban.reason");
+						IpFilterManagerFactory.getSingleton().getIPFilter().ban(peer.getIp(),
+								msg, true );
+						peer.getManager().removePeer(peer, "Peer kicked and banned");
+					}
+				}
+			});
+		}
 
 		ban_item.setEnabled( !onlyMyPeer );
 
@@ -971,7 +1080,7 @@ PeersViewBase
 		
 		ban_for_item.setEnabled( !onlyMyPeer );
 
-		addPeersMenu( download_specific, "", menu );
+		addPeersMenu( download_specific, "", menu, peers );
 	}
 	
 	private static String
@@ -1004,9 +1113,10 @@ PeersViewBase
 	
 	protected static boolean
 	addPeersMenu(
-		final DownloadManager 	man,
-		String					column_name,
-		Menu					menu )
+		DownloadManager 	man,
+		String				column_name,
+		Menu				menu,
+		PEPeer[]			peers )
 	{
 		new MenuItem( menu, SWT.SEPARATOR);
 
@@ -1204,39 +1314,73 @@ PeersViewBase
 			}
 		}
 		
+		addPeerSetMenu( menu, peers );
+		
+		return( true );
+	}
+	
+	public static void
+	addPeerSetMenu(
+		Menu		menu,
+		PEPeer[]	peers )
+	{
+		String	peer_cc = null;
+		
+		if ( peers.length == 1 ){
+			
+			String[] details = PeerUtils.getCountryDetails( peers[0] );
+			
+			if ( details != null && details.length > 0 ){
+		
+				peer_cc = details[0];
+				
+			}else{
+				
+				peer_cc = PeerUtils.CC_UNKNOWN;
+			}
+		}
+		
+		addPeerSetMenu( menu, true, peer_cc );
+	}
+	
+	public static void
+	addPeerSetMenu(
+		Menu		menu,
+		boolean		do_auto_cat,
+		String		peer_cc )
+	{
 		SpeedLimitHandler slh = SpeedLimitHandler.getSingleton(CoreFactory.getSingleton());
 		
 		List<SpeedLimitHandler.PeerSet> peer_sets = slh.getPeerSets();
 		
-		boolean	has_auto = false;
+		boolean	has_auto_cat 	= false;
+		boolean	has_cc_peer_set = false;
 		
+		String peer_cc_set_name = peer_cc==null?null:( peer_cc + " " + MessageText.getString( "TableColumn.header.peers" ));
+
 		for ( SpeedLimitHandler.PeerSet peer_set: peer_sets ){
+					
+			if ( do_auto_cat ){
 		
-			Pattern pattern = peer_set.getClientPattern();
+				Pattern pattern = peer_set.getClientPattern();
+
+				if ( pattern != null && pattern.pattern().equals( "auto" )){
+		
+					has_auto_cat = true;
+				}
+			}
 			
-			if ( pattern != null ){
+			if ( peer_cc_set_name != null ){
 				
-				if ( pattern.pattern().equals( "auto" )){
-		
-					has_auto = true;
+				if ( peer_set.getName().equals( peer_cc_set_name )){
+					
+					has_cc_peer_set = true;
 				}
 			}
 		}
 		
-		if ( has_auto ){
-			
-			MenuItem edit_slh_item = new MenuItem( menu, SWT.PUSH );
-			
-			Messages.setLanguageText( edit_slh_item, "menu.edit.peer.set.config");
-	
-			edit_slh_item.addListener(
-				SWT.Selection,
-				(e)->{
-					Utils.editSpeedLimitHandlerConfig( slh );
-				});
-			
-		}else{
-			
+		if ( do_auto_cat && !has_auto_cat ){
+						
 			MenuItem auto_cat_item = new MenuItem( menu, SWT.PUSH );
 			
 			Messages.setLanguageText( auto_cat_item, "menu.add.auto.client.peerset");
@@ -1248,7 +1392,31 @@ PeersViewBase
 				});
 		}
 		
-		return( true );
+		if ( peer_cc_set_name != null && !has_cc_peer_set ){
+			
+			MenuItem auto_cat_item = new MenuItem( menu, SWT.PUSH );
+			
+			Messages.setLanguageText( auto_cat_item, "menu.add.peerset.for.cc", Utils.getCCString( peer_cc ));
+	
+			auto_cat_item.addListener(
+				SWT.Selection,
+				(e)->{
+					slh.addConfigLine( "peer_set " + peer_cc_set_name + "=" + peer_cc + ",group=" + MessageText.getString( "TableColumn.header.Country" ) , true );
+				});
+		}
+		
+		if ( has_auto_cat || has_cc_peer_set ){
+			
+			MenuItem edit_slh_item = new MenuItem( menu, SWT.PUSH );
+			
+			Messages.setLanguageText( edit_slh_item, "menu.edit.peer.set.config");
+	
+			edit_slh_item.addListener(
+				SWT.Selection,
+				(e)->{
+					Utils.editSpeedLimitHandlerConfig( slh );
+				});
+		}
 	}
 	
 	@Override
@@ -1268,7 +1436,7 @@ PeersViewBase
 		String 	sColumnName, 
 		Menu 	menuThisColumn)
 	{
-		if ( addPeersMenu( null, sColumnName, menuThisColumn )){
+		if ( addPeersMenu( null, sColumnName, menuThisColumn, new PEPeer[0] )){
 
 			new MenuItem( menuThisColumn, SWT.SEPARATOR );
 		}
@@ -1319,27 +1487,42 @@ PeersViewBase
 		@Override
 		public void
 		handleEvent(
-				Event e)
+			Event e)
 		{
-			if ( !run( peers )){
+			if ( !run( e, peers )){
 
 				for ( PEPeer peer: peers ){
 
-					run( peer );
+					run( e, peer );
 				}
 			}
 		}
 
 		public void
 		run(
-				PEPeer peer)
+			Event	e,
+			PEPeer peer)
 		{
-
+			run( peer );
 		}
 
 		public boolean
 		run(
-				PEPeer[]	peers )
+			Event		e,
+			PEPeer[]	peers )
+		{
+			return( run( peers ));
+		}
+		
+		public void
+		run(
+			PEPeer peer)
+		{
+		}
+
+		public boolean
+		run(
+			PEPeer[]	peers )
 		{
 			return( false );
 		}

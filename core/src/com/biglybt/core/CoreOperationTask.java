@@ -20,6 +20,7 @@
 package com.biglybt.core;
 
 import com.biglybt.core.download.DownloadManager;
+import com.biglybt.core.util.FileUtil;
 
 public interface
 CoreOperationTask
@@ -29,6 +30,19 @@ CoreOperationTask
 	
 	public DownloadManager
 	getDownload();
+	
+	public default String[]
+	getAffectedFileSystems()
+	{
+		DownloadManager dm = getDownload();
+		
+		if ( dm != null ){
+			
+			return( FileUtil.getFileStoreNames( dm.getAbsoluteSaveLocation()));
+		}
+		
+		return( null );
+	}
 	
 	public default void
 	run(
@@ -41,6 +55,7 @@ CoreOperationTask
 	
 	public interface
 	ProgressCallback
+		extends Comparable<ProgressCallback>
 	{
 		public int ST_NONE		= 0x0000;
 		public int ST_PAUSE		= 0x0001;
@@ -94,6 +109,20 @@ CoreOperationTask
 			return( 0 );
 		}
 		
+		public boolean
+		isAutoPause();
+		
+		public void
+		setAutoPause(
+			boolean		b );
+	
+		public int
+		getOrder();
+		
+		public void
+		setOrder(
+			int		order );
+		
 		public int
 		getSupportedTaskStates();
 		
@@ -109,9 +138,11 @@ CoreOperationTask
 	ProgressCallbackAdapter
 		implements ProgressCallback
 	{
-		private volatile int 	thousandths;
-		private volatile long	size;
-		private volatile String	subtask;
+		private volatile int 		thousandths;
+		private volatile long		size;
+		private volatile String		subtask;
+		private volatile boolean	auto_pause;
+		private volatile int	 	order;
 		
 		public int
 		getProgress()
@@ -152,6 +183,33 @@ CoreOperationTask
 			subtask = name;
 		}
 		
+		public boolean
+		isAutoPause()
+		{
+			return( auto_pause );
+		}
+		
+		public void
+		setAutoPause(
+			boolean		b )
+		{
+			auto_pause = b;
+		}
+		
+		public int
+		getOrder()
+		{
+			return( order );
+		}
+		
+		public void
+		setOrder(
+			int		_order )
+		{
+			order = _order;
+		}
+
+		
 		public int
 		getSupportedTaskStates()
 		{
@@ -168,6 +226,22 @@ CoreOperationTask
 		getTaskState()
 		{
 			return( ST_NONE );
+		}
+		
+		@Override
+		public int 
+		compareTo(
+			ProgressCallback o)
+		{
+			long l = getSize() - o.getSize();
+			
+			if ( l < 0 ){
+				return( -1 );
+			}else if ( l > 0 ){
+				return( 1 );
+			}else{
+				return( 0 );
+			}
 		}
 	}
 }

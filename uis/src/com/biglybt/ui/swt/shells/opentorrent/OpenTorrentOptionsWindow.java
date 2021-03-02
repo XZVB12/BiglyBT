@@ -37,6 +37,7 @@ import org.json.simple.JSONObject;
 import com.biglybt.core.Core;
 import com.biglybt.core.CoreFactory;
 import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.config.ConfigKeys;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.config.impl.ConfigurationDefaults;
 import com.biglybt.core.content.ContentException;
@@ -45,6 +46,7 @@ import com.biglybt.core.content.RelatedContentManager;
 import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.download.DownloadManagerAvailability;
 import com.biglybt.core.download.DownloadManagerFactory;
+import com.biglybt.core.download.DownloadManagerState;
 import com.biglybt.core.internat.LocaleTorrentUtil;
 import com.biglybt.core.internat.LocaleUtilDecoder;
 import com.biglybt.core.internat.MessageText;
@@ -72,6 +74,7 @@ import com.biglybt.ui.config.ConfigSectionFile;
 import com.biglybt.ui.config.ConfigSectionInterfaceTags;
 import com.biglybt.ui.mdi.MultipleDocumentInterface;
 import com.biglybt.ui.swt.*;
+import com.biglybt.ui.swt.components.BufferedLabel;
 import com.biglybt.ui.swt.components.shell.ShellFactory;
 import com.biglybt.ui.swt.config.IntSwtParameter;
 import com.biglybt.ui.swt.imageloader.ImageLoader;
@@ -433,7 +436,7 @@ public class OpenTorrentOptionsWindow
 
 													}else if ( num_accept + num_reject >= instances.size()){
 
-														w.okPressed();
+														w.okPressed( false );
 													}
 												}
 											}
@@ -527,7 +530,7 @@ public class OpenTorrentOptionsWindow
 						@Override
 						protected void clicked(int intValue) {
 							if (intValue == SWT.OK) {
-								okPressed();
+								okPressed(false);
 							}else{
 								cancelPressed();
 							}
@@ -542,6 +545,78 @@ public class OpenTorrentOptionsWindow
 						SWT.CANCEL
 					});
 					buttonsArea.swt_createButtons(((SWTSkinObjectContainer) soButtonArea).getComposite());
+					
+					int autoCloseSecs = COConfigurationManager.getIntParameter( ConfigKeys.File.ICFG_UI_ADDTORRENT_OPENOPTIONS_AUTO_CLOSE_SECS );
+					
+					if ( autoCloseSecs > 0 ){
+						
+						BufferedLabel label = buttonsArea.getLabel();
+						
+						boolean[] disabled = {false};
+						
+						label.addMouseListener(
+							new MouseAdapter(){																
+								@Override
+								public void mouseDown(MouseEvent e){
+									disabled[0] = !disabled[0];
+								}
+							});
+						
+						AEThread2.createAndStartDaemon( "AutoClose", ()->{
+							
+							int	rem = autoCloseSecs;
+							
+							while( !label.isDisposed()){
+								
+								if ( disabled[0] ){
+									
+									Utils.execSWTThread(()->{
+
+										if ( label.isDisposed()){
+											return;
+										}
+										label.setForeground( Colors.dark_grey );
+										
+									});
+								}else{
+									
+									int f_rem = rem;
+									
+									Utils.execSWTThread(()->{
+										
+										if ( label.isDisposed()){
+											return;
+										}
+										
+										label.setForeground( null );
+										
+										if ( f_rem == 0 ){
+											
+											okPressed( true );
+											
+										}else{
+											
+											label.setText( MessageText.getString( "label.auto.accept.in", new String[]{ TimeFormatter.format3(f_rem) }));
+										}
+									});
+									
+									if ( rem == 0 ){
+										
+										break;
+									}
+									
+									rem--;
+								}
+								
+								try{
+									Thread.sleep( 1000 );
+									
+								}catch( Throwable e ){
+									
+								}
+															}
+						});
+					}
 				}
 
 				sash_object = (SWTSkinObjectSash)skin_outter.getSkinObject("multi-sash");
@@ -776,7 +851,8 @@ public class OpenTorrentOptionsWindow
 	}
 
 	private void
-	okPressed()
+	okPressed(
+		boolean		auto )
 	{
 		TorrentManagerImpl t_man = TorrentManagerImpl.getSingleton();
 
@@ -788,7 +864,7 @@ public class OpenTorrentOptionsWindow
 
 			String dataDir = instance.cmbDataDir.getText();
 
-			if ( !instance.okPressed(dataDir)){
+			if ( !instance.okPressed( dataDir, auto )){
 
 				all_ok = false;
 
@@ -805,7 +881,7 @@ public class OpenTorrentOptionsWindow
 						public void
 						runSupport()
 						{
-							TorrentOpener.addTorrent( instance.getOptions());
+							instance.getOptions().addToDownloadManager();
 
 						}
 					});
@@ -4167,8 +4243,8 @@ public class OpenTorrentOptionsWindow
 				public void handleEvent(Event event) {
 					TorrentOpenFileOptions[] infos = tvFiles.getSelectedDataSources().toArray(
 							new TorrentOpenFileOptions[0]);
-					if (infos.length == 1) {
-						renameFilenames(infos[0]);
+					if (infos.length > 0 ) {
+						renameFilenames(infos);
 					}
 				}
 			});
@@ -5358,8 +5434,8 @@ public class OpenTorrentOptionsWindow
 					if (e.keyCode == SWT.F2 && (e.stateMask & SWT.MODIFIER_MASK) == 0) {
 						TorrentOpenFileOptions[] infos = tvFiles.getSelectedDataSources().toArray(
 								new TorrentOpenFileOptions[0]);
-						if (infos.length == 1) {
-							renameFilenames(infos[0]);
+						if (infos.length > 0) {
+							renameFilenames(infos);
 						}
 						e.doit = false;
 						return;
@@ -5536,7 +5612,7 @@ public class OpenTorrentOptionsWindow
 
 						// rename
 
-					if (infos.length == 1) {
+					if (infos.length > 0 ) {
 						item = new MenuItem(menu, SWT.PUSH);
 						Messages.setLanguageText(item, "FilesView.menu.rename_only");
 						item.addSelectionListener(new SelectionAdapter() {
@@ -5544,7 +5620,7 @@ public class OpenTorrentOptionsWindow
 							@Override
 							public void widgetSelected(SelectionEvent e) {
 
-								renameFilenames(infos[0]);
+								renameFilenames(infos);
 							}
 						});
 					}
@@ -5837,7 +5913,7 @@ public class OpenTorrentOptionsWindow
 
 					boolean hasRowsSelected = rows.length > 0;
 					if (btnRename != null && !btnRename.isDisposed()) {
-						btnRename.setEnabled(rows.length == 1);
+						btnRename.setEnabled(rows.length > 0 );
 					}
 					if (btnRetarget != null && !btnRetarget.isDisposed()) {
 						btnRetarget.setEnabled(hasRowsSelected);
@@ -5879,10 +5955,36 @@ public class OpenTorrentOptionsWindow
 			});
 		}
 
-		protected void renameFilenames(final TorrentOpenFileOptions torrentFileInfo) {
+		protected void 
+		renameFilenames(TorrentOpenFileOptions[] torrentFileInfos) 
+		{
+			renameFilenames(torrentFileInfos, 0);
+		}
+		
+		protected void 
+		renameFilenames(TorrentOpenFileOptions[] torrentFileInfos, int index)
+		{
+			if ( index >= torrentFileInfos.length ){
+				
+				return;
+			}
+			
+			TorrentOpenFileOptions torrentFileInfo = torrentFileInfos[index];
+			
 			SimpleTextEntryWindow dialog = new SimpleTextEntryWindow(
 					"FilesView.rename.filename.title", "FilesView.rename.filename.text");
-			dialog.setPreenteredText(torrentFileInfo.getOriginalFileName(), false); // false -> it's not "suggested", it's a previous value
+			
+			String fileName = torrentFileInfo.getOriginalFileName();
+			
+			dialog.setPreenteredText(fileName, false); // false -> it's not "suggested", it's a previous value
+			
+			int pos = fileName.lastIndexOf( '.' );
+
+			if ( pos > 0 ){
+
+				dialog.selectPreenteredTextRange( new int[]{ 0, pos });
+			}
+					
 			dialog.allowEmptyInput(false);
 			dialog.setRememberLocationSize( "file.rename.dialog.pos" );
 			dialog.prompt(new UIInputReceiverListener() {
@@ -5901,6 +6003,10 @@ public class OpenTorrentOptionsWindow
 						row.invalidate(true);
 						row.refresh(true);
 					}
+					
+					Utils.execSWTThreadLater(1, ()->{
+						renameFilenames( torrentFileInfos, index+1 );
+					});
 				}
 			});
 		}
@@ -6009,7 +6115,42 @@ public class OpenTorrentOptionsWindow
 
 			if ( COConfigurationManager.getBooleanParameter( "open.torrent.window.rename.on.tlf.change" )){
 
-				torrentOptions.setManualRename( newDir.getName());
+				TorrentOpenFileOptions[] files = torrentOptions.getFiles();
+				
+					// if only one file is left selected then use this as the new name rather than
+					// the most likely less useful folder name
+				
+				TorrentOpenFileOptions	single_file = null;
+				
+				for ( TorrentOpenFileOptions file: files ){
+					
+					if ( file.isToDownload()){
+						
+						if ( single_file == null ){
+							
+							single_file = file;
+							
+						}else{
+							
+							single_file = null;
+							
+							break;
+						}
+					}
+				}
+				
+				String new_name;
+				
+				if ( single_file == null ){
+					
+					new_name = newDir.getName();
+					
+				}else{
+					
+					new_name = single_file.getDestFileName();
+				}
+				
+				torrentOptions.setManualRename( new_name );
 
 			}else{
 
@@ -6860,7 +7001,8 @@ public class OpenTorrentOptionsWindow
 		
 		private boolean
 		okPressed(
-			String dataDirPassed)
+			String 		dataDirPassed,
+			boolean		auto )
 		{
 			File filePassed = FileUtil.newFile( dataDirPassed );
 
@@ -7106,6 +7248,27 @@ public class OpenTorrentOptionsWindow
 					}
 				}
 			}
+			
+			if ( auto ){
+				
+				try{
+					String autoTagName = MessageText.getString( "tag.auto.accepted" );
+					
+					Tag autoTag = tagType.getTag( autoTagName, true );
+					
+					if ( autoTag == null ){
+						autoTag = tagType.createTag( autoTagName, true );
+						autoTag.setPublic(false);
+					}
+					
+					if ( !initialTags.contains( autoTag )){
+						initialTags.add( autoTag );
+						initialTagsChanged = true;
+					}
+				}catch( TagException e ){
+				}
+			}
+			
 			if (initialTagsChanged) {
 				torrentOptions.setInitialTags(initialTags);
 			}

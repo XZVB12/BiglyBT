@@ -50,6 +50,7 @@ DownloadManagerState
 	public static final String AT_TRACKER_CLIENT_EXTENSIONS	= "trackerclientextensions";
 	public static final String AT_FILE_LINKS_DEPRECATED		= "filelinks";
 	public static final String AT_FILE_LINKS2				= "filelinks2";
+	public static final String AT_FILE_ALLOC_REQUEST		= "allocreq";		// Map
 	public static final String AT_FILE_STORE_TYPES			= "storetypes";
 	public static final String AT_FILE_DOWNLOADED			= "filedownloaded";
 	public static final String AT_FLAGS						= "flags";
@@ -381,6 +382,7 @@ DownloadManagerState
 	// General access - make sure you use an AT_ value defined above when calling
 	// these methods.
 	public void setAttribute(String	name, String value);
+	public void setAttribute(String	name, String value, boolean setDirty);
 	public String getAttribute(String name);
 	public void	setMapAttribute(String name, Map value);
 	public Map getMapAttribute(String name);

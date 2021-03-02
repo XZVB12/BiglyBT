@@ -38,6 +38,7 @@ import com.biglybt.core.dht.DHT;
 import com.biglybt.core.dht.DHTListener;
 import com.biglybt.core.dht.speed.DHTSpeedTester;
 import com.biglybt.core.disk.DiskManager;
+import com.biglybt.core.disk.DiskManagerFactory;
 import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.download.DownloadManagerState;
 import com.biglybt.core.global.GlobalManager;
@@ -337,8 +338,9 @@ CoreImpl
 			if (DEBUG_STARTUPTIME) {
 				logTime("Init1");
 			}
-	
-	
+		
+			DiskManagerFactory.initialise( this );
+			
 			NetworkManager.getSingleton();
 	
 			if (DEBUG_STARTUPTIME) {
@@ -1648,7 +1650,7 @@ CoreImpl
 						// it has been a minute - turn off logging if it is enabled as this can significantly
 						// slow things down
 					
-					if ( System.getProperty( "user.is.fubar99", "0" ).equals( "0")){
+					if ( System.getProperty( SystemProperties.SYSPROP_LOGGING_DISABLE_STOP_ON_SLOW_CLOSE, "0" ).equals( "0" )){
 					
 						Logger.setClosingTakingTooLong();
 					}
@@ -2092,14 +2094,14 @@ CoreImpl
 										
 										break;
 									}
+								
+									Thread.sleep(1*1000);
+								
+									loops++;
 								}
-
-								Thread.sleep(1*1000);
-								
-								loops++;
-								
 							}catch( Throwable e ){
 
+								Debug.out( e );
 							}
 						}
 					}.start();

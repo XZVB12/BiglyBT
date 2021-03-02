@@ -465,18 +465,38 @@ public class TagCanvas
 			gc.setAlpha(0xFF);
 		}
 
-		clientArea.x += paddingContentX0;
-		clientArea.width = clientArea.width - paddingContentX0;
-		int imageX = clientArea.x;
-		if (showImage && image != null) {
+		int imageX;
+		
+		if ( compact && showImage && imageOverride ){
 			Rectangle bounds = image.getBounds();
 			int imageH = size.y - paddingImageY - paddingImageY;
 			int imageW = (bounds.width * imageH) / bounds.height;
 
+			int leftPad = ( clientArea.width - ( imageW + paddingImageX*2 ))/2;
+			
+			clientArea.x += leftPad;
+			
+			imageX = clientArea.x + paddingImageX;
+			
 			gc.drawImage(image, 0, 0, bounds.width, bounds.height, imageX,
 					clientArea.y + paddingImageY, imageW, imageH);
-			clientArea.x += imageW + paddingImageX;
-			clientArea.width -= imageW - paddingImageX;
+			clientArea.x += leftPad + imageW + paddingImageX*2;
+			clientArea.width -= leftPad + imageW + paddingImageX*2;
+
+		}else{
+			clientArea.x += paddingContentX0;
+			clientArea.width = clientArea.width - paddingContentX0;
+			imageX = clientArea.x;
+			if (showImage && image != null) {
+				Rectangle bounds = image.getBounds();
+				int imageH = size.y - paddingImageY - paddingImageY;
+				int imageW = (bounds.width * imageH) / bounds.height;
+	
+				gc.drawImage(image, 0, 0, bounds.width, bounds.height, imageX,
+						clientArea.y + paddingImageY, imageW, imageH);
+				clientArea.x += imageW + paddingImageX;
+				clientArea.width -= imageW - paddingImageX;
+			}
 		}
 		
 		gc.setForeground(colorText);
@@ -506,7 +526,7 @@ public class TagCanvas
 				int imageH = size.y - paddingImageY - paddingImageY;
 				int imageW = (bounds.width * imageH) / bounds.height;
 
-				gc.drawLine(imageX, y, imageW, y);
+				gc.drawLine(imageX, y, imageX+imageW, y);
 				
 			}else{
 			
@@ -696,15 +716,22 @@ public class TagCanvas
 		String iconFile = tag.getImageFile();
 		if (iconFile != null) {
 			try {
-				String resource = new File(iconFile).toURI().toURL().toExternalForm();
-
-				ImageLoader.getInstance().getUrlImage(resource, MAX_IMAGE_SIZE,
+				File file = new File( iconFile );
+				
+				ImageLoader.getInstance().getFileImage( file, MAX_IMAGE_SIZE,
 						(image, key, returnedImmediately) -> {
 							if (image == null) {
 								return;
 							}
 
-							Utils.execSWTThread(() -> setImage(image, key));
+							if ( isDisposed()){
+								
+								com.biglybt.ui.swt.imageloader.ImageLoader.getInstance().releaseImage( key );
+								
+							}else{
+								
+								Utils.execSWTThread(() -> setImage(image, key));
+							}
 						});
 			} catch (Throwable e) {
 				Debug.out(e);

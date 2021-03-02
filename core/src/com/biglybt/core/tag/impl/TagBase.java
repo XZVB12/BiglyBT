@@ -61,6 +61,8 @@ TagBase
 	protected static final String	AT_RSS_ENABLE					= "rss.enable";
 	protected static final String	AT_RATELIMIT_UP_PRI				= "rl.uppri";
 	protected static final String	AT_XCODE_TARGET					= "xcode.to";
+	
+	protected static final String	AT_FL_PREVENT_DELETE			= "fl.pd";
 	protected static final String	AT_FL_MOVE_COMP					= "fl.comp";
 	protected static final String	AT_FL_MOVE_COMP_OPT				= "fl.comp.o";
 	protected static final String	AT_FL_MOVE_REM					= "fl.rem";
@@ -72,13 +74,16 @@ TagBase
 	protected static final String	AT_FL_MOVE_ASSIGN				= "fl.ass";
 	protected static final String	AT_FL_MOVE_ASSIGN_OPT			= "fl.ass.o";
 
-	protected static final String	AT_RATELIMIT_MIN_SR				= "rl.minsr";
-	protected static final String	AT_RATELIMIT_MAX_SR				= "rl.maxsr";
-	protected static final String	AT_RATELIMIT_MAX_SR_ACTION		= "rl.maxsr.a";
-	protected static final String	AT_RATELIMIT_MAX_AGGREGATE_SR	= "rl.maxaggsr";
+	protected static final String	AT_RATELIMIT_MIN_SR						= "rl.minsr";
+	protected static final String	AT_RATELIMIT_MAX_SR						= "rl.maxsr";
+	protected static final String	AT_RATELIMIT_MAX_SR_ACTION				= "rl.maxsr.a";
+	protected static final String	AT_RATELIMIT_MAX_AGGREGATE_SR			= "rl.maxaggsr";
 	protected static final String	AT_RATELIMIT_MAX_AGGREGATE_SR_ACTION	= "rl.maxaggsr.a";
 	protected static final String	AT_RATELIMIT_MAX_AGGREGATE_SR_PRIORITY	= "rl.maxaggsr.p";
 	protected static final String	AT_RATELIMIT_FP_SEEDING					= "rl.fps";
+	protected static final String	AT_RATELIMIT_BOOST						= "rl.bst";
+	protected static final String	AT_RATELIMIT_MAX_ACTIVE_DL				= "rl.maxadl";
+	
 	protected static final String	AT_PROPERTY_PREFIX				= "pp.";
 	//protected static final String	AT_EOA_PREFIX					= "eoa.";	// meh, should be used but copy/paste error resulted in AT_PROPERTY_PREFIX being used instead 
 	protected static final String	AT_BYTES_UP						= "b.up";
@@ -193,17 +198,20 @@ TagBase
 
 				tag_limits = (TagFeatureLimits)this;
 			}
-			
-			if ( group != null ){
-				
-				tag_type.setTagGroup( this, null, group );
-			}
 		}
 	}
 
 	protected void
 	initialized()
 	{
+			// need to defer group setting until this point as the tag-group can have listeners and we 
+			// don't want the Tag to 'escape' to the world before it is initialized
+		
+		if ( group != null ){
+			
+			tag_type.setTagGroup( this, null, group );
+		}
+		
 		loadPersistentStuff();
 
 		loadTransientStuff();
@@ -765,7 +773,85 @@ TagBase
 			}
 		}
 	}
+	
+	public boolean
+	getPreventDelete()
+	{
+		if ( tag_fl != null ){
+		
+			return( readBooleanAttribute( AT_FL_PREVENT_DELETE, false ));
+		}
+		
+		return( false );
+	}
+	
+	public void
+	setPreventDelete(
+		boolean		b )
+	{
+		if ( tag_fl != null ){
+		
+			if ( getPreventDelete() != b ){
+			
+				writeBooleanAttribute( AT_FL_PREVENT_DELETE, b );
+		
+				tag_type.fireMetadataChanged( this );
+			}
+		}
+	}
 
+	public boolean
+	getTagBoost()
+	{
+		if ( tag_rl != null ){
+			
+			return( readBooleanAttribute( AT_RATELIMIT_BOOST, false ));
+		}
+		
+		return( false );
+	}
+
+	public void
+	setTagBoost(
+		boolean		boost )
+	{
+		if ( tag_rl != null ){
+			
+			if ( getTagBoost() != boost ){
+			
+				writeBooleanAttribute( AT_RATELIMIT_BOOST, boost );
+		
+				tag_type.fireMetadataChanged( this );
+			}
+		}
+	}
+	
+	public int
+	getMaxActiveDownloads()
+	{
+		if ( tag_rl != null ){
+			
+			return( readLongAttribute( AT_RATELIMIT_MAX_ACTIVE_DL, 0L ).intValue());
+		}
+		
+		return( 0 );
+	}
+
+	public void
+	setMaxActiveDownloads(
+		int			max )
+	{
+		if ( tag_rl != null ){
+			
+			if ( getMaxActiveDownloads() != max ){
+			
+				writeLongAttribute( AT_RATELIMIT_MAX_ACTIVE_DL, max );
+		
+				tag_type.fireMetadataChanged( this );
+			}
+		}
+	}
+	
 		// initial save location
 
 	public boolean

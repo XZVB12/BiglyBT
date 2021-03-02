@@ -51,6 +51,7 @@ TOTorrentImpl
 	protected static final String TK_PIECES				= "pieces";
 
 	protected static final String TK_PRIVATE			= "private";
+	protected static final String TK_SOURCE				= "source";
 
 	protected static final String TK_NAME_UTF8			= "name.utf-8";
 	protected static final String TK_PATH_UTF8			= "path.utf-8";
@@ -282,6 +283,9 @@ TOTorrentImpl
 					ok = temp.createNewFile();
 
 				}catch( Throwable e ){
+					throw new TOTorrentException(
+							"Insufficient permissions to write '" + temp + "'",
+							TOTorrentException.RT_WRITE_FAILS, e);
 				}
 
 				if ( !ok ){
@@ -1105,6 +1109,36 @@ TOTorrentImpl
 		}
 
 		return( false );
+	}
+	
+	@Override
+	public void
+	setSource(
+		String str )
+
+		throws TOTorrentException
+	{		
+		additional_info_properties.put( TK_SOURCE, str.getBytes( Constants.UTF_8 ));
+
+			// update torrent hash
+
+		torrent_hash	= null;
+
+		getHash();
+	}
+
+	@Override
+	public String
+	getSource()
+	{
+		Object o = additional_info_properties.get( TK_SOURCE );
+
+		if ( o instanceof byte[] ){
+
+			return(new String((byte[])o, Constants.UTF_8 ));
+		}
+		
+		return( null );
 	}
 
 	@Override

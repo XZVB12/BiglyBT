@@ -384,27 +384,8 @@ public class SideBar
 					SideBarEntrySWT sbe = getCurrentEntry();
 	
 					if ( sbe != null ){
-						SkinnedDialog skinnedDialog =
-								new SkinnedDialog(
-										"skin3_dlg_sidebar_popout",
-										"shell",
-										menu==menuItemOnTop?UIFunctionsManagerSWT.getUIFunctionsSWT().getMainShell():null,
-										SWT.RESIZE | SWT.MAX | SWT.DIALOG_TRIM);
-	
-						SWTSkin skin = skinnedDialog.getSkin();
-	
-						SWTSkinObjectContainer cont = sbe.buildStandAlone((SWTSkinObjectContainer)skin.getSkinObject( "content-area" ));
-	
-						if ( cont != null ){
-	
-							skinnedDialog.setTitle( sbe.getTitle());
-	
-							skinnedDialog.open();
-	
-						}else{
-	
-							skinnedDialog.close();
-						}
+
+						popoutEntry( sbe, menu==menuItemOnTop );
 					}
 				}
 			};
@@ -414,6 +395,35 @@ public class SideBar
 		}
 	}
 
+	public void
+	popoutEntry(
+		MdiEntry	entry,
+		boolean		onTop )
+	{
+		SideBarEntrySWT sbe = (SideBarEntrySWT)entry;
+		
+		SkinnedDialog skinnedDialog =
+				new SkinnedDialog(
+						"skin3_dlg_sidebar_popout",
+						"shell",
+						onTop?UIFunctionsManagerSWT.getUIFunctionsSWT().getMainShell():null,
+						SWT.RESIZE | SWT.MAX | SWT.DIALOG_TRIM);
+	
+		SWTSkin skin = skinnedDialog.getSkin();
+	
+		SWTSkinObjectContainer cont = sbe.buildStandAlone((SWTSkinObjectContainer)skin.getSkinObject( "content-area" ));
+	
+		if ( cont != null ){
+	
+			skinnedDialog.setTitle( sbe.getTitle());
+	
+			skinnedDialog.open( "mdi.popout:" + sbe.getId(), true );
+	
+		}else{
+	
+			skinnedDialog.close();
+		}
+	}
 
 	/**
 	 *
@@ -973,7 +983,20 @@ public class SideBar
 
 							break;
 						}
+						case SWT.MouseDoubleClick: {
+							
+							int indent = END_INDENT ? tree.getClientArea().width - 1 : 0;
+							treeItem = tree.getItem(new Point(indent, event.y));
+							SideBarEntrySWT entry = (SideBarEntrySWT) ((treeItem == null || treeItem.isDisposed())
+									? null : treeItem.getData("MdiEntry"));
 
+							if ( entry != null ){
+								
+								popoutEntry( entry, true );
+							}
+							
+							break;
+						}
 						case SWT.Dispose: {
 							fontHeader.dispose();
 							if (dropTarget != null && !dropTarget.isDisposed()) {
@@ -1014,6 +1037,7 @@ public class SideBar
 
 		tree.addListener(SWT.Selection, treeListener);
 		tree.addListener(SWT.Dispose, treeListener);
+		tree.addListener(SWT.MouseDoubleClick, treeListener);
 
 		// For icons
 		tree.addListener(SWT.MouseUp, treeListener);

@@ -21,6 +21,7 @@
 package com.biglybt.core.speedmanager;
 
 import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -66,6 +67,8 @@ import com.biglybt.pif.ui.UIManager;
 import com.biglybt.pif.ui.model.BasicPluginViewModel;
 import com.biglybt.pifimpl.local.PluginCoreUtils;
 import com.biglybt.pifimpl.local.utils.UtilitiesImpl;
+import com.biglybt.plugin.net.buddy.BuddyPlugin;
+import com.biglybt.plugin.net.buddy.BuddyPluginUtils; 
 
 public class
 SpeedLimitHandler
@@ -78,6 +81,7 @@ SpeedLimitHandler
 	private static final Object	RLU_TO_BE_REMOVED_KEY = new Object();
 
 	private static final Object PEER_LT_WAIT_START_KEY	= new Object();
+	private static final Object PEER_ASN_WAIT_START_KEY	= new Object();
 	
 	public static SpeedLimitHandler
 	getSingleton(
@@ -159,7 +163,10 @@ SpeedLimitHandler
 
 	private final Object extensions_lock = new Object();
 
-	private final List<String>	auto_peer_set_queue = new ArrayList<>();
+	private final List<String>	auto_peer_set_queue_client 	= new ArrayList<>();
+	private final List<String>	auto_peer_set_queue_intf	= new ArrayList<>();
+	
+	private volatile	BuddyPlugin buddy_plugin;
 	
 	private
 	SpeedLimitHandler(
@@ -289,6 +296,17 @@ SpeedLimitHandler
 		setNetLimitPauseAllActive( COConfigurationManager.getBooleanParameter( "speed.limit.handler.schedule.nl_pa_active", false ));
 	}
 
+	private BuddyPlugin
+	getBuddyPlugin()
+	{
+		if ( buddy_plugin == null ){
+			
+			buddy_plugin = BuddyPluginUtils.getPlugin();
+		}
+		
+		return( buddy_plugin );
+	}
+	
 	private void
 	setRulePauseAllActive(
 		boolean	active )
@@ -1078,6 +1096,13 @@ SpeedLimitHandler
 					Set<String>	categories_or_tags = new HashSet<>();
 
 					Pattern client_pattern	= null;
+					Pattern intf_pattern	= null;
+					Pattern asn_pattern		= null;
+					boolean client_pattern_inverse	= false;
+					boolean intf_pattern_inverse	= false;
+					boolean asn_pattern_inverse		= false;
+					
+					String group	= null;
 					
 					PeerSet set = null;
 
@@ -1133,12 +1158,49 @@ SpeedLimitHandler
 							}else if ( lc_lhs.equals( "client" )){
 								
 								try{
+									if ( rhs.startsWith( "!" )){
+										rhs = rhs.substring(1);
+										client_pattern_inverse = true;
+									}
+									
 									client_pattern = Pattern.compile( rhs, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE );
 									
 								}catch( Throwable e ){
 									
-									throw( new Exception( "Invalid pattern - '" + rhs + "'" ));
+									throw( new Exception( "Invalid client pattern - '" + rhs + "'" ));
 								}
+							}else if ( lc_lhs.equals( "intf" )){
+								
+								try{
+									if ( rhs.startsWith( "!" )){
+										rhs = rhs.substring(1);
+										intf_pattern_inverse = true;
+									}
+									
+									intf_pattern = Pattern.compile( rhs, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE );
+									
+								}catch( Throwable e ){
+									
+									throw( new Exception( "Invalid intf pattern - '" + rhs + "'" ));
+								}
+							}else if ( lc_lhs.equals( "asn" )){
+								
+								try{
+									if ( rhs.startsWith( "!" )){
+										rhs = rhs.substring(1);
+										asn_pattern_inverse = true;
+									}
+									
+									asn_pattern = Pattern.compile( rhs, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE );
+									
+								}catch( Throwable e ){
+									
+									throw( new Exception( "Invalid asn pattern - '" + rhs + "'" ));
+								}
+							}else if ( lc_lhs.equals( "group" )){
+
+								group = rhs;
+								
 							}else{
 
 								String name = lhs;
@@ -1186,7 +1248,21 @@ SpeedLimitHandler
 						throw( new Exception());
 					}
 
-					set.setParameters( inverse, up_lim, down_lim, peer_up_lim, peer_down_lim, categories_or_tags, client_pattern );
+					int	pattern_count = 0;
+					if ( client_pattern != null )pattern_count++;
+					if ( intf_pattern != null )pattern_count++;
+					if ( asn_pattern != null )pattern_count++;
+					
+					if ( pattern_count > 1 ){
+						
+						throw( new Exception( "Only one of client, intf and asn pattern can be set for a peer set" ));
+					}
+					
+					set.setParameters( 
+							inverse, up_lim, down_lim, peer_up_lim, peer_down_lim, categories_or_tags, 
+							client_pattern, client_pattern_inverse, 
+							intf_pattern, intf_pattern_inverse,
+							asn_pattern, asn_pattern_inverse, group );
 
 				}catch( Throwable e ){
 
@@ -2153,16 +2229,25 @@ SpeedLimitHandler
 					
 					dispatcher.dispatch( AERunnable.create(
 						()->{
-							List<String>	todo;
+							List<String>	todo_clients;
+							List<String>	todo_intf;
 							
-							synchronized( auto_peer_set_queue ){
+							synchronized( auto_peer_set_queue_client ){
 							
-								todo = new ArrayList<>( auto_peer_set_queue );
+								todo_clients = new ArrayList<>( auto_peer_set_queue_client );
 								
-								auto_peer_set_queue.clear();
+								auto_peer_set_queue_client.clear();
 							}
 							
-							if ( todo.isEmpty()){
+							synchronized( auto_peer_set_queue_intf ){
+								
+								todo_intf = new ArrayList<>( auto_peer_set_queue_intf );
+								
+								auto_peer_set_queue_intf.clear();
+							}
+
+							
+							if ( todo_clients.isEmpty() && todo_intf.isEmpty()){
 								
 								return;
 							}
@@ -2171,7 +2256,7 @@ SpeedLimitHandler
 		
 								Map<String,PeerSet>	added = new HashMap<>();
 								
-								for ( String name: todo ){
+								for ( String name: todo_clients ){
 								
 									if ( name.isEmpty()){
 										
@@ -2200,11 +2285,44 @@ SpeedLimitHandler
 										try{
 											Pattern pattern = Pattern.compile( "^\\Q" + name + "\\E.*", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE  );
 											
-											set.setParameters( false, -1, -1, 0, 0, new HashSet<String>(), pattern );
+											set.setParameters( false, -1, -1, 0, 0, new HashSet<String>(), pattern, false, null, false, null, false, null );
 											
 											set.addCIDRorCCetc( "all" );
 												
 											set.setGroup( MessageText.getString( "Peers.column.client" ) + "_" + MessageText.getString( "wizard.maketorrent.auto" ));
+											
+											added.put( set_name, set );
+																						
+										}catch( Throwable e ){
+											
+											Debug.out( e );
+										}
+									}
+								}
+								
+								for ( String name: todo_intf ){
+									
+									if ( name.isEmpty()){
+										
+										name = "?";
+									}
+									
+									String set_name = MessageText.getString( "label.interface.short" ) + "_" + name;
+									
+									PeerSet set = current_ip_sets.get( set_name );
+									
+									if ( set == null ){
+																														
+										set = new PeerSet( set_name );
+										
+										try{
+											Pattern pattern = Pattern.compile( "^\\Q" + name + "\\E.*", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE  );
+											
+											set.setParameters( false, -1, -1, 0, 0, new HashSet<String>(), null, false, pattern, false, null, false, null );
+											
+											set.addCIDRorCCetc( "all" );
+												
+											set.setGroup( MessageText.getString( "label.interface.short" ) + "_" + MessageText.getString( "wizard.maketorrent.auto" ));
 											
 											added.put( set_name, set );
 																						
@@ -2237,58 +2355,78 @@ SpeedLimitHandler
 	initialiseIPSets(
 		Map<String,PeerSet>		sets )
 	{
-		Set<Integer>		id_allocated	= new HashSet<>();
-		Map<PeerSet,Integer>	id_map 		= new HashMap<>();
-		int					id_max		= -1;
+		String config_max_key = "speed.limit.handler.ipset_n.max";
+		
+		Set<Integer>			id_allocated	= new HashSet<>();
+		Map<PeerSet,Integer>	id_map 			= new HashMap<>();
+		int						id_max			= COConfigurationManager.getIntParameter( config_max_key, -1 );
 
-		for ( int i=0;i<2;i++ ){
-
+		int	original_id_max = id_max;
+		
+		for ( int i=0; i<2; i++ ){
+			
 			for ( PeerSet s: i==0?current_ip_sets.values():sets.values()){
-
+					
 				String name = s.getName();
-
+	
 				try{
 					String config_key = "speed.limit.handler.ipset_n." + Base32.encode( name.getBytes( "UTF-8" ));
-
-					if ( i == 0 ){
-
-						int existing = COConfigurationManager.getIntParameter( config_key, -1 );
-
-						if ( existing != -1 ){
-
-							if ( id_allocated.contains( existing )){
-							
-								COConfigurationManager.removeParameter( config_key );	// clash
-								
-							}else{
-								
-								id_allocated.add( existing );
-								
-								id_map.put( s, existing );
-
-								id_max = Math.max( id_max, existing );
-							}
-						}
-					}else{
-
-						Integer tag_id = id_map.get( s );
-
-						if ( tag_id == null ){
-
-							tag_id = ++id_max;
-
-							COConfigurationManager.setParameter( config_key, tag_id );
-						}
-
-						s.initialise( tag_id );
+	
+					int existing = COConfigurationManager.getIntParameter( config_key, -1 );
+					
+					if ( existing != -1 ){
 						
-						current_ip_sets.put( s.getName(), s );
+						if ( id_allocated.contains( existing )){
+							
+							COConfigurationManager.removeParameter( config_key );	// clash
+							
+						}else{
+							
+							id_allocated.add( existing );
+							
+							id_map.put( s, existing );
+	
+							id_max = Math.max( id_max, existing );
+						}
 					}
 				}catch( Throwable e ){
-
+	
 					Debug.out( e );
 				}
 			}
+		}
+			
+		for ( PeerSet s: sets.values()){
+
+			String name = s.getName();
+
+			try{
+				String config_key = "speed.limit.handler.ipset_n." + Base32.encode( name.getBytes( "UTF-8" ));
+
+				Integer tag_id = id_map.get( s );
+
+				if ( tag_id == null ){
+
+					tag_id = ++id_max;
+
+					COConfigurationManager.setParameter( config_key, tag_id );
+				}
+
+				s.initialise( tag_id );
+						
+				current_ip_sets.put( s.getName(), s );
+					
+			}catch( Throwable e ){
+
+				Debug.out( e );
+			}
+		}
+		
+		if ( id_max > original_id_max ){
+			
+			COConfigurationManager.setParameter( config_max_key, id_max );
+			
+			COConfigurationManager.setDirty();
 		}
 	}
 	
@@ -2377,7 +2515,7 @@ SpeedLimitHandler
 		ip_set_rate_limiters_down.clear();
 		ip_set_rate_limiters_up.clear();
 
-		boolean	has_cats_or_tags = false;
+		Set<String>	has_cats_or_tags = new HashSet<>();
 
 		for ( PeerSet set: current_ip_sets.values()){
 
@@ -2385,9 +2523,11 @@ SpeedLimitHandler
 
 			ip_set_rate_limiters_up.put( set.getName(), set.getUpLimiter());
 
-			if ( set.getCategoriesOrTags() != null ){
+			Set<String> cot = set.getCategoriesOrTags();
+			
+			if ( cot != null ){
 
-				has_cats_or_tags = true;
+				has_cats_or_tags.addAll( cot );
 			}
 
 			set.removeAllPeers();
@@ -2457,7 +2597,7 @@ SpeedLimitHandler
 		private final Object		lock = SpeedLimitHandler.this;
 
 		private final com.biglybt.pif.download.DownloadManager		download_manager;
-		private final boolean													has_cats_or_tags;
+		private final Set<String>									has_cats_or_tags;
 
 		final List<Runnable>	listener_removers = new ArrayList<>();
 
@@ -2466,7 +2606,7 @@ SpeedLimitHandler
 		private
 		DML(
 			com.biglybt.pif.download.DownloadManager		_download_manager,
-			boolean													_has_cats_or_tags )
+			Set<String>										_has_cats_or_tags )
 		{
 			download_manager	= _download_manager;
 			has_cats_or_tags	= _has_cats_or_tags;
@@ -2510,13 +2650,15 @@ SpeedLimitHandler
 					return;
 				}
 
-				if ( has_cats_or_tags ){
+				if ( !has_cats_or_tags.isEmpty()){
 
 						// attribute listener
-
+					
 					final DownloadAttributeListener attr_listener = new
 							DownloadAttributeListener()
 							{
+								String current_cat = download.getAttribute( category_attribute );
+
 								@Override
 								public void
 								attributeEventOccurred(
@@ -2524,7 +2666,14 @@ SpeedLimitHandler
 									TorrentAttribute 	attribute,
 									int 				event_type )
 								{
-									checkIPSets();
+									String old_cat = current_cat;
+									
+									current_cat = download.getAttribute( category_attribute );
+									
+									if ( has_cats_or_tags.contains( old_cat ) || has_cats_or_tags.contains( current_cat )){
+									
+										checkIPSets();
+									}
 								}
 							};
 
@@ -2551,7 +2700,10 @@ SpeedLimitHandler
 								Tag 		tag,
 								Taggable 	tagged)
 							{
-								checkIPSets();
+								if ( has_cats_or_tags.contains( tag.getTagName( true ))){
+								
+									checkIPSets();
+								}
 							}
 
 							@Override
@@ -2560,10 +2712,12 @@ SpeedLimitHandler
 								Tag 		tag,
 								Taggable 	tagged)
 							{
-								checkIPSets();
+								if ( has_cats_or_tags.contains( tag.getTagName( true ))){
+								
+									checkIPSets();
+								}
 							}
 						};
-
 
 						download.addAttributeListener( attr_listener, category_attribute, DownloadAttributeListener.WRITTEN );
 
@@ -2572,12 +2726,12 @@ SpeedLimitHandler
 						listener_removers.add(
 							new Runnable(){
 								@Override
-								public void run(){
+								public void run()
+								{
+									download.removeAttributeListener( attr_listener, category_attribute, DownloadAttributeListener.WRITTEN );
 
-								download.removeAttributeListener( attr_listener, category_attribute, DownloadAttributeListener.WRITTEN );
-
-								tt.removeTagListener( core_download, tag_listener );
-							}});
+									tt.removeTagListener( core_download, tag_listener );
+								}});
 					}
 
 					// peer listener
@@ -2586,7 +2740,8 @@ SpeedLimitHandler
 					new DownloadPeerListener()
 					{
 						private Runnable 	pm_listener_remover;
-
+						private PeerManager	current_pm;
+						
 						@Override
 						public void
 						peerManagerAdded(
@@ -2627,12 +2782,20 @@ SpeedLimitHandler
 
 								peer_manager.addListener( listener );
 
+								if ( pm_listener_remover != null ){
+									
+									Debug.out( "Old listener still active" );
+								}
+								
+								current_pm = peer_manager;
+								
 								pm_listener_remover =
 									new Runnable(){
 										@Override
-										public void run(){
-										peer_manager.removeListener( listener );
-									}};
+										public void run()
+										{
+											peer_manager.removeListener( listener );
+										}};
 
 								listener_removers.add( pm_listener_remover );
 							}
@@ -2648,13 +2811,20 @@ SpeedLimitHandler
 							Download		download,
 							PeerManager		peer_manager )
 						{
-							synchronized( lock ){
+							synchronized( lock ){ 
 
-								if ( pm_listener_remover != null && listener_removers.contains( pm_listener_remover  )){
+								if ( peer_manager != current_pm ){
+									
+									Debug.out( "PM mismatch: " + current_pm + "/" + peer_manager );
+								}
+								
+								current_pm = null;
+								
+								if ( listener_removers.remove( pm_listener_remover  )){
 
 									pm_listener_remover.run();
-
-									listener_removers.remove( pm_listener_remover );
+									
+									pm_listener_remover = null;
 								}
 							}
 						}
@@ -2665,9 +2835,11 @@ SpeedLimitHandler
 				listener_removers.add(
 					new Runnable(){
 						@Override
-						public void run(){
-						download.removePeerListener( peer_listener );
-					}});
+						public void run()
+						{
+							download.removePeerListener( peer_listener );
+						}
+					});
 			}
 		}
 
@@ -2814,6 +2986,10 @@ SpeedLimitHandler
 					if ( details != null && details.length > 0 ){
 
 						peer_cc = details[0];
+						
+					}else{
+						
+						peer_cc = "??";
 					}
 				}
 
@@ -3399,7 +3575,7 @@ SpeedLimitHandler
 		result.add( "#            day_of_week: mon|tue|wed|thu|fri|sat|sun" );
 		result.add( "#        time: hh:mm - 24 hour clock; 00:00=midnight; local time" );
 		result.add( "#        extension: (start_tag|stop_tag|pause_tag|resume_tag):<tag_name> (enable_priority|disable_priority)" );
-		result.add( "#    peer_set <set_name>=[<CIDR_specs...>|CC list|Network List|<prior_set_name>] [,inverse=[yes|no]] [,up=<limit>] [,down=<limit>] [peer_up=<limit>] [peer_down=<limit>] [,cat=<cat names>] [,tag=<tag names>] [,client=<regular expression>|auto]" );
+		result.add( "#    peer_set <set_name>=[<CIDR_specs...>|CC list|Network List|<prior_set_name>] [,inverse=[yes|no]] [,up=<limit>] [,down=<limit>] [peer_up=<limit>] [peer_down=<limit>] [,cat=<cat names>] [,tag=<tag names>] [,client=<regular expression>|auto] [,intf=<regular expression>|auto] [,asn=<regular expression>]" );
 		result.add( "#    net_limit (hourly|daily|weekly|monthly)[(:<profile>|$<tag>)] [total=<limit>] [up=<limit>] [down=<limit>]");
 		result.add( "#    priority_(up|down) <id>=<tag_name> [,<id>=<tag_name>]+ [,freq=<secs>] [,max=<limit>] [,probe=<cycles>]" );
 		result.add( "#" );
@@ -3418,6 +3594,7 @@ SpeedLimitHandler
 		result.add( "#     peer_set Europe=EU;AD;AL;AT;BA;BE;BG;BY;CH;CS;CZ;DE;DK;EE;ES;FI;FO;FR;FX;GB;GI;GR;HR;HU;IE;IS;IT;LI;LT;LU;LV;MC;MD;MK;MT;NL;NO;PL;PT;RO;SE;SI;SJ;SK;SM;UA;VA" );
 		result.add( "#     peer_set Blorp=Europe;US" );
 		result.add( "#     peer_set BiglyBTPeers=Public;I2P;Tor,client=BiglyBT.*" );
+		result.add( "#     peer_set AutoIntf=all,intf=auto" );
 		result.add( "#" );
 		result.add( "# When multiple rules apply the one further down the list of rules take precedence" );
 		result.add( "# Currently peer_set limits are not schedulable" );
@@ -5461,6 +5638,12 @@ SpeedLimitHandler
 		private int				peer_down_lim;
 
 		private Pattern			client_pattern;
+		private Pattern			intf_pattern;
+		private Pattern			asn_pattern;
+		
+		private boolean			client_pattern_inverse;
+		private boolean			intf_pattern_inverse;
+		private boolean			asn_pattern_inverse;
 		
 		private String			group;
 		
@@ -5480,6 +5663,8 @@ SpeedLimitHandler
 		initialise(
 			int		tag_id )
 		{
+			// System.out.println( "init " + name + " -> " + tag_id );
+			
 			if ( ip_set_tag_type != null ){
 
 				tag_impl	= new TagPeerImpl( this, tag_id );
@@ -5505,7 +5690,8 @@ SpeedLimitHandler
 				}
 			}
 			
-			if ( client_pattern != null && client_pattern.pattern().equals( "auto" )){
+			if ( 	( client_pattern != null && client_pattern.pattern().equals( "auto" )) ||
+					( intf_pattern != null && intf_pattern.pattern().equals( "auto" ))){
 				
 				if ( tag != null ){
 					
@@ -5522,7 +5708,13 @@ SpeedLimitHandler
 			int				_peer_up_lim,
 			int				_peer_down_lim,
 			Set<String>		_cats_or_tags,
-			Pattern			_client_pattern )
+			Pattern			_client_pattern,
+			boolean			_client_pattern_inverse,
+			Pattern			_intf_pattern,
+			boolean			_intf_pattern_inverse,
+			Pattern			_asn_pattern,
+			boolean			_asn_pattern_inverse,
+			String			_group )
 		{
 			inverse	= _inverse;
 
@@ -5544,11 +5736,25 @@ SpeedLimitHandler
 
 			categories_or_tags = _cats_or_tags.size()==0?null:_cats_or_tags;
 			
-			client_pattern = _client_pattern;
+			client_pattern 	= _client_pattern;
+			intf_pattern 	= _intf_pattern;
+			asn_pattern		= _asn_pattern;
 			
+			client_pattern_inverse	= _client_pattern_inverse;
+			intf_pattern_inverse	= _intf_pattern_inverse;
+			asn_pattern_inverse		= _asn_pattern_inverse;
+						
 			if ( client_pattern != null && client_pattern.pattern().equals( "auto" )){
 				
 				setGroup( MessageText.getString( "Peers.column.client" ) + "_" + MessageText.getString( "wizard.maketorrent.auto" ));
+				
+			}else if ( intf_pattern != null && intf_pattern.pattern().equals( "auto" )){
+				
+				setGroup( MessageText.getString( "label.interface.short" ) + "_" + MessageText.getString( "wizard.maketorrent.auto" ));
+				
+			}else if ( _group != null ){
+				
+				setGroup( _group );
 			}
 		}
 
@@ -5723,7 +5929,7 @@ SpeedLimitHandler
 			networks.addAll( other.networks );
 		}
 
-		private String
+		public String
 		getName()
 		{
 			return( name );
@@ -5838,11 +6044,15 @@ SpeedLimitHandler
 		private void
 		destroy()
 		{
-			if ( tag_impl != null ){
-
-				tag_impl.removeTag();
+			TagPeerImpl tag = tag_impl;
+			
+			if ( tag != null ){
 
 				tag_impl = null;
+
+				tag.removeAll();
+				
+				tag.removeTag();
 			}
 		}
 
@@ -5874,7 +6084,9 @@ SpeedLimitHandler
 					", Inverse=" + inverse +
 					", Categories/Tags=" + (categories_or_tags==null?"[]":String.valueOf(categories_or_tags)) +
 					", Peer_Up=" + format( peer_up_lim ) + ", Peer_Down=" + format( peer_down_lim )) +
-					", Client=" + (client_pattern==null?"":client_pattern);
+					", Client=" + (client_pattern==null?"":(client_pattern_inverse?"!":"")+client_pattern) +
+					", Intf=" + (intf_pattern==null?"":(intf_pattern_inverse?"!":"")+intf_pattern) +
+					", ASN=" + (asn_pattern==null?"":(asn_pattern_inverse?"!":"")+asn_pattern);
 
 		}
 
@@ -5884,10 +6096,12 @@ SpeedLimitHandler
 			implements TagPeer, TagFeatureExecOnAssign
 		{
 			private final PeerSet		ip_set;
-			private final Object	UPLOAD_PRIORITY_ADDED_KEY = new Object();
+			
+			private final Object	UPLOAD_PRIORITY_ADDED_KEY 	= new Object();
+			private final Object	BOOSTED_KEY 				= new Object();
 
-			private int upload_priority;
-
+			private int 		upload_priority;
+			
 			private final Set<PEPeer>	added_peers 	= new HashSet<>();
 			private final Set<PEPeer>	pending_peers 	= new HashSet<>();
 
@@ -5902,13 +6116,24 @@ SpeedLimitHandler
 				
 				addTag();
 
+					// these tags aget added and removed so we need to remember the config separately so we can reset it
+				
 				upload_priority = COConfigurationManager.getIntParameter( "speed.limit.handler.ipset_n." + tag_id + ".uppri", 0 );
+				
+				setTagBoost( COConfigurationManager.getBooleanParameter( "speed.limit.handler.ipset_n." + tag_id + ".boost", false ));
 				
 				int actions = COConfigurationManager.getIntParameter( "speed.limit.handler.ipset_n." + tag_id + ".eos", -1 );
 				
 				if ( actions == TagFeatureExecOnAssign.ACTION_DESTROY ){
 					
 					super.setActionEnabled( actions, true );
+				}
+				
+				int[] colour = COConfigurationManager.getRGBParameter( "speed.limit.handler.ipset_n." + getTagID() + ".color" );
+				
+				if ( colour != null ){
+					
+					super.setColor( colour );
 				}
 			}
 
@@ -5938,6 +6163,15 @@ SpeedLimitHandler
 				
 					COConfigurationManager.setParameter( "speed.limit.handler.ipset_n." + getTagID() + ".eos", enabled?TagFeatureExecOnAssign.ACTION_DESTROY:-1);
 				}
+			}
+			
+			@Override
+			public void 
+			setColor(int[] rgb)
+			{
+				super.setColor(rgb);
+				
+				COConfigurationManager.setRGBParameter( "speed.limit.handler.ipset_n." + getTagID() + ".color", rgb, null );
 			}
 			
 			private void
@@ -6063,7 +6297,9 @@ SpeedLimitHandler
 			private boolean
 			deferEOS()
 			{
-				return( ip_set.client_pattern != null );
+					// we might not match this peer set as not yet applied client/intf.asn matching...
+				
+				return( ip_set.client_pattern != null || ip_set.intf_pattern != null || ip_set.asn_pattern != null );
 			}
 			
 			private void
@@ -6091,18 +6327,37 @@ SpeedLimitHandler
 			 * @return 0=defer, 1=yes, 2=no, 3=remove
 			 */
 			
-			
 			private int
 			canAdd(
 				PEPeer		peer )
 			{
-				Pattern client_pattern = ip_set.client_pattern;
+				Pattern client_pattern 	= ip_set.client_pattern;
+				Pattern intf_pattern 	= ip_set.intf_pattern;
+				Pattern asn_pattern 	= ip_set.asn_pattern;
 				
-				if ( client_pattern == null ){
+				if ( client_pattern == null && intf_pattern == null && asn_pattern == null ){
 					
 					return( 1 );
+					
+				}else if ( client_pattern != null ){
+					
+					return( canAddClient( peer, client_pattern ));
+					
+				}else if ( intf_pattern != null ){
+					
+					return( canAddIntf( peer, intf_pattern ));
+					
+				}else{
+					
+					return( canAddASN( peer, asn_pattern ));
 				}
-				
+			}
+			
+			private int
+			canAddClient(
+				PEPeer		peer,
+				Pattern		client_pattern )
+			{
 				boolean auto_client = client_pattern.pattern().equals( "auto" );
 				
 				boolean	result = false;
@@ -6129,11 +6384,11 @@ SpeedLimitHandler
 							}
 						}
 						
-						synchronized( auto_peer_set_queue ){
+						synchronized( auto_peer_set_queue_client ){
 							
-							if ( !auto_peer_set_queue.contains( client )){
+							if ( !auto_peer_set_queue_client.contains( client )){
 							
-								auto_peer_set_queue.add( client );
+								auto_peer_set_queue_client.add( client );
 							
 								auto_peer_set_checker.dispatch();
 							}
@@ -6145,6 +6400,10 @@ SpeedLimitHandler
 					if ( client_pattern.matcher( hs_name ).find()){
 						
 						result = true;
+					}
+					
+					if ( client_pattern_inverse ){
+						result = !result;
 					}
 				}else{
 						// we want to give a bit more time for the extension handshake to arrive
@@ -6188,11 +6447,11 @@ SpeedLimitHandler
 								}
 							}
 							
-							synchronized( auto_peer_set_queue ){
+							synchronized( auto_peer_set_queue_client ){
 								
-								if ( !auto_peer_set_queue.contains( client )){
+								if ( !auto_peer_set_queue_client.contains( client )){
 								
-									auto_peer_set_queue.add( client );
+									auto_peer_set_queue_client.add( client );
 								
 									auto_peer_set_checker.dispatch();
 								}
@@ -6204,6 +6463,10 @@ SpeedLimitHandler
 						if ( client_pattern.matcher( id_name ).find()){
 							
 							result = true;
+						}
+						
+						if ( client_pattern_inverse ){
+							result = !result;
 						}
 					}
 				}
@@ -6219,6 +6482,115 @@ SpeedLimitHandler
 				return( result?1:2 );
 			}
 			
+			private int
+			canAddIntf(
+				PEPeer		peer,
+				Pattern		intf_pattern )
+			{			
+				boolean auto_intf = intf_pattern.pattern().equals( "auto" );
+				
+				boolean	result = false;
+				
+				NetworkInterface	ni = PeerUtils.getLocalNetworkInterface( peer );
+				
+				String intf_name;
+				
+				if ( ni != null ){
+					
+					intf_name = ni.getName();
+					
+				}else{
+					
+					intf_name = "?";
+				}
+
+				if ( auto_intf ){
+											
+					synchronized( auto_peer_set_queue_intf ){
+						
+						if ( !auto_peer_set_queue_intf.contains( intf_name )){
+						
+							auto_peer_set_queue_intf.add( intf_name );
+						
+							auto_peer_set_checker.dispatch();
+						}
+					}
+					
+					return( 2 );
+				}
+				
+				if ( intf_pattern.matcher( intf_name ).find()){
+					
+					result = true;
+				}
+				
+				if ( intf_pattern_inverse ){
+					result = !result;
+				}
+				
+				if ( result ){
+					
+					if ( isActionEnabled( TagFeatureExecOnAssign.ACTION_DESTROY )){
+
+						return( 3 );
+					}
+				}
+				
+				return( result?1:2 );
+			}
+			
+			private int
+			canAddASN(
+				PEPeer		peer,
+				Pattern		asn_pattern )
+			{
+				boolean	result = false;
+				
+				String as_name	= PeerUtils.getASN( peer );
+				
+				if ( as_name != null ){
+					
+					if ( !as_name.isEmpty()){
+						
+						if ( asn_pattern.matcher( as_name ).find()){
+						
+							result = true;
+						}
+						
+						if ( asn_pattern_inverse ){
+							result = !result;
+						}
+					}
+				}else{
+						// we want to give a bit more time for asn lookup
+									
+					Long start = (Long)peer.getUserData( PEER_ASN_WAIT_START_KEY );
+					
+					long now = SystemTime.getMonotonousTime();
+					
+					if ( start == null ){
+						
+						peer.setUserData( PEER_ASN_WAIT_START_KEY, now );
+						
+						return( 0 );
+						
+					}else if ( now - start < 20*1000 ){
+					
+						return( 0 );
+					}
+				}
+				
+				if ( result ){
+					
+					if ( isActionEnabled( TagFeatureExecOnAssign.ACTION_DESTROY )){
+
+						return( 3 );
+					}
+				}
+				
+				return( result?1:2 );
+			}
+				
 			private void
 			add(
 				PeerManager		peer_manager,
@@ -6339,6 +6711,11 @@ SpeedLimitHandler
 					((PEPeer)t).updateAutoUploadPriority( UPLOAD_PRIORITY_ADDED_KEY, true );
 				}
 
+				if ( getTagBoost()){
+				
+					setBoost((PEPeer)t, true );
+				}
+				
 				super.addTaggable( t );
 			}
 
@@ -6352,6 +6729,11 @@ SpeedLimitHandler
 					((PEPeer)t).updateAutoUploadPriority( UPLOAD_PRIORITY_ADDED_KEY, false );
 				}
 
+				if ( getTagBoost()){
+					
+					setBoost((PEPeer)t, false );
+				}
+				
 				super.removeTaggable( t );
 			}
 
@@ -6558,6 +6940,69 @@ SpeedLimitHandler
 
 			@Override
 			public void
+			setTagBoost(
+				boolean		boost )
+			{
+				super.setTagBoost( boost );
+				
+				COConfigurationManager.setParameter( "speed.limit.handler.ipset_n." + getTagID() + ".boost", boost );
+
+				List<PEPeer> peers = getTaggedPeers();
+
+				for ( PEPeer peer: peers ){
+
+					setBoost( peer, boost );
+				}
+			}
+
+			private void
+			setBoost(
+				PEPeer		pe_peer,
+				boolean		boost )
+			{			
+				BuddyPlugin bp = getBuddyPlugin();
+				
+				if ( bp != null ){
+				
+					boolean is_boosted = pe_peer.getUserData( BOOSTED_KEY ) != null;
+					
+					if ( boost || is_boosted ){
+						
+						try{
+							Download download = PluginCoreUtils.wrap( core.getGlobalManager().getDownloadManager( new HashWrapper( pe_peer.getManager().getHash())));
+							
+							Peer peer = PluginCoreUtils.wrap( pe_peer );
+							
+							if ( download != null && peer != null ){
+							
+								if ( boost ){
+											
+									if ( !is_boosted ){
+									
+										bp.setPartialBuddy( download, peer, true, false );
+										
+										pe_peer.setUserData( BOOSTED_KEY, "" );
+									}
+						
+								}else{
+									
+										// must be boosted here
+									
+									bp.setPartialBuddy( download, peer, false, false );
+									
+									pe_peer.setUserData( BOOSTED_KEY, null );
+								}
+							}					
+						}catch( Throwable e ){
+							
+							Debug.out( e );
+						}
+					}
+				}
+			}
+			
+			@Override
+			public void
 			removeTag()
 			{
 				if ( upload_priority > 0 ){
@@ -6567,6 +7012,8 @@ SpeedLimitHandler
 					for ( PEPeer peer: peers ){
 
 						peer.updateAutoUploadPriority( UPLOAD_PRIORITY_ADDED_KEY, false );
+						
+						setBoost( peer, false );
 					}
 				}
 

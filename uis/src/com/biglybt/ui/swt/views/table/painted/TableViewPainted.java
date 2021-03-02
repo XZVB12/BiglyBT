@@ -37,7 +37,6 @@ import com.biglybt.core.internat.MessageText.MessageTextListener;
 import com.biglybt.core.util.*;
 import com.biglybt.ui.common.table.*;
 import com.biglybt.ui.common.table.impl.TableColumnManager;
-import com.biglybt.ui.common.table.impl.TableRowCoreSorter;
 import com.biglybt.ui.common.table.impl.TableViewImpl;
 import com.biglybt.ui.selectedcontent.ISelectedContent;
 import com.biglybt.ui.selectedcontent.SelectedContentListener;
@@ -162,7 +161,8 @@ public class TableViewPainted
 	private int totalHeight = 0;
 
 	private boolean redrawTableScheduled;
-
+	private int		redrawTableDisabled;
+	
 	private ScrollBar hBar;
 
 	private ScrollBar vBar;
@@ -376,7 +376,7 @@ public class TableViewPainted
 					if ((event.stateMask & SWT.SHIFT) != 0) {
 						if (rowToSelect != null && focusedRow != null) {
 							TableRowCore[] selectedRows = getSelectedRows();
-							Arrays.sort(selectedRows, new TableRowCoreSorter());
+							sortRowsByVisibilityIndex( selectedRows );
 							boolean select = selectedRows.length == 0
 									|| selectedRows[0] == focusedRow;
 //							System.out.println("i=" + selectedRows[0].getIndex() + ";"
@@ -458,26 +458,26 @@ public class TableViewPainted
 						}
 					} else {
 						TableRowCore rowToSelect = getNextRow(focusedRow);
-  					if (rowToSelect != null) {
-  						if ((event.stateMask & SWT.SHIFT) != 0) {
-  							TableRowCore[] selectedRows = getSelectedRows();
-  							Arrays.sort(selectedRows, new TableRowCoreSorter());
-  							boolean select = selectedRows.length == 0
-  									|| selectedRows[selectedRows.length - 1] == focusedRow;
-  							if (select) {
-  								rowToSelect.setSelected(select);
-  							} else {
-  								TableRowPainted rowToUnSelect = focusedRow;
-  								setFocusedRow(rowToSelect);
-  								rowToUnSelect.setSelected(false);
-  							}
-  						} else {
-  							setSelectedRows(new TableRowCore[] {
-  								rowToSelect
-  							});
-  						}
+						if (rowToSelect != null) {
+							if ((event.stateMask & SWT.SHIFT) != 0) {
+								TableRowCore[] selectedRows = getSelectedRows();
+								sortRowsByVisibilityIndex( selectedRows );
+								boolean select = selectedRows.length == 0
+										|| selectedRows[selectedRows.length - 1] == focusedRow;
+								if (select) {
+									rowToSelect.setSelected(select);
+								} else {
+									TableRowPainted rowToUnSelect = focusedRow;
+									setFocusedRow(rowToSelect);
+									rowToUnSelect.setSelected(false);
+								}
+							} else {
+								setSelectedRows(new TableRowCore[] {
+										rowToSelect
+								});
+							}
 							updateTable = true;
-  					}
+						}
 					}
 				} else if (event.keyCode == SWT.PAGE_DOWN) {
 					TableRowCore row = focusedRow;
@@ -548,6 +548,20 @@ public class TableViewPainted
 		};
 	}
 
+	private void
+	sortRowsByVisibilityIndex(
+		TableRowCore[] 	selectedRows )
+	{
+		Arrays.sort(
+			selectedRows,
+			new Comparator<TableRowCore>(){
+				@Override
+				public int compare(TableRowCore o1, TableRowCore o2){
+					return( o1.getVisibleRowIndex() - o2.getVisibleRowIndex());
+				}
+			});
+	}
+	
 	protected boolean isRowPartiallyVisible(TableRowPainted row) {
 		if (row == null) {
 			return false;
@@ -723,8 +737,10 @@ public class TableViewPainted
 			for ( int i=0;i<rows.length-1;i++){
 			
 				if ( rows[i] == relativeToRow ){
-											
-					return( rows[i+1] );
+						
+					TableRowCore next = rows[i+1];
+												
+					return( next );
 				}
 			}
 			
@@ -1607,7 +1623,7 @@ public class TableViewPainted
 			FrequencyLimitedDispatcher(
 				AERunnable.create(()->{
 					Utils.execSWTThread(()->{
-						if ( cTable.isDisposed()){
+						if ( cTable == null || cTable.isDisposed()){
 							return;
 						}
 						if (DEBUG_SELECTION) {
@@ -3218,11 +3234,39 @@ public class TableViewPainted
 		});
 	}
 
-	public void redrawTable() {
+	@Override
+	public void 
+	setRedrawEnabled(
+		boolean enabled)
+	{
 		synchronized (TableViewPainted.this) {
-			if (redrawTableScheduled) {
+			
+			if ( enabled ){
+				
+				redrawTableDisabled--;
+				
+			}else{
+				
+				redrawTableDisabled++;
+			}
+		}
+		
+		if ( enabled ){
+			
+			redrawTable();
+		}
+	}
+	
+	public void 
+	redrawTable()
+	{
+		synchronized (TableViewPainted.this) {
+			
+			if ( redrawTableScheduled || redrawTableDisabled > 0 ){
+				
 				return;
 			}
+			
 			redrawTableScheduled = true;
 		}
 

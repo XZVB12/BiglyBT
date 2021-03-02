@@ -24,13 +24,11 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.custom.ScrolledComposite;
 import org.eclipse.swt.events.KeyEvent;
 import org.eclipse.swt.events.KeyListener;
 import org.eclipse.swt.events.ModifyEvent;
 import org.eclipse.swt.events.ModifyListener;
 import org.eclipse.swt.graphics.Image;
-import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.layout.*;
 import org.eclipse.swt.widgets.*;
 
@@ -97,6 +95,9 @@ public class TagSettingsView
 		private BooleanSwtParameter isFilter;
 
 		public BooleanSwtParameter uploadPriority;
+		public BooleanSwtParameter boost;
+
+		public IntSwtParameter maxActiveDownloads;
 
 		public BooleanSwtParameter firstPrioritySeeding;
 
@@ -111,6 +112,8 @@ public class TagSettingsView
 		public StringListSwtParameter	max_aggregate_sr_action;
 
 		public BooleanSwtParameter	max_aggregate_sr_priority;
+
+		private BooleanSwtParameter preventDeletion;
 
 		public folderOption 		initalSaveFolder;
 		public BooleanSwtParameter	initalSaveData;
@@ -587,7 +590,8 @@ public class TagSettingsView
 
 			Group gTransfer = new Group(cMainComposite, SWT.NONE);
 			gTransfer.setText( MessageText.getString("label.transfer.settings"));
-			gridLayout = new GridLayout(6, false);
+			final int gTransferCols = 8;
+			gridLayout = new GridLayout(gTransferCols, false);
 			gTransfer.setLayout(gridLayout);
 
 			gd = new GridData(SWT.FILL, SWT.NONE, false, false, 4, 1);
@@ -601,14 +605,23 @@ public class TagSettingsView
 				boolean supportsTagUploadLimit = true;
 				boolean hasTagUploadPriority = true;
 				boolean supportsFPSeeding = true;
+				boolean supportsMaxDLS = true;
+				boolean supportsBoost = true;
 				for (TagFeatureRateLimit rl : rls) {
 					supportsTagDownloadLimit &= rl.supportsTagDownloadLimit();
 					supportsTagUploadLimit &= rl.supportsTagUploadLimit();
 					hasTagUploadPriority &= rl.getTagUploadPriority() >= 0;
 					
-					if ( rl.getTag().getTagType().getTagType() != TagType.TT_DOWNLOAD_MANUAL ){
+					int tt = rl.getTag().getTagType().getTagType();
+							
+					if ( tt != TagType.TT_DOWNLOAD_MANUAL ){
 					
-						supportsFPSeeding = false;
+						supportsFPSeeding 	= false;
+						supportsMaxDLS		= false;
+					}
+					if ( tt != TagType.TT_PEER_IPSET ){
+						
+						supportsBoost = false;
 					}
 				}
 
@@ -739,11 +752,51 @@ public class TagSettingsView
 									return changed;
 								}
 							});
-					gd = new GridData();
-					gd.horizontalSpan = 6 - cols_used;
-					params.uploadPriority.setLayoutData(gd);
+					
+					cols_used += 2;
+				}
+				
+				// Field: Boost
+				if (supportsBoost) {
+					params.boost = new BooleanSwtParameter(gTransfer,
+							"tag.boost", "PeersView.menu.boost", null,
+							new BooleanSwtParameter.ValueProcessor() {
+								@Override
+								public Boolean getValue(BooleanSwtParameter p) {
+									int value = -1;
+									for (TagFeatureRateLimit rl : rls) {
+										value = updateIntBoolean(rl.getTagBoost(),
+												value);
+									}
+									return value == 2 ? null : value == 1;
+								}
+
+								@Override
+								public boolean setValue(BooleanSwtParameter p, Boolean value) {
+									boolean changed = rls.length == 0;
+									boolean boost = value;
+									for (TagFeatureRateLimit rl : rls) {
+										if (rl.getTagBoost() != boost) {
+											rl.setTagBoost(boost);
+											changed = true;
+										}
+									}
+									return changed;
+								}
+							});
+					
+					cols_used += 2;
 				}
 
+				if ( cols_used > 0 && cols_used < gTransferCols){			
+					Label lab = new Label( gTransfer, SWT.NULL );
+					gd = new GridData();
+					gd.horizontalSpan = gTransferCols - cols_used;
+					lab.setLayoutData(gd);						
+				}
+				
+				cols_used = 0;
+				
 				// Field: Min Share
 				if (numTags == 1 && rls[0].getTagMinShareRatio() >= 0) {
 					params.min_sr = new FloatSwtParameter(gTransfer, "tag.min_sr", "TableColumn.header.min_sr",
@@ -764,6 +817,8 @@ public class TagSettingsView
 									return true;
 								}
 							});
+					
+					cols_used += 2;
 				}
 
 				// Field: Max Share
@@ -792,6 +847,8 @@ public class TagSettingsView
 
 						// max sr action
 
+					cols_used += 2;
+					
 					String[] ST_ACTION_VALUES = {
 							"" + TagFeatureRateLimit.SR_ACTION_QUEUE,
 							"" + TagFeatureRateLimit.SR_ACTION_PAUSE,
@@ -830,8 +887,19 @@ public class TagSettingsView
 									return false;
 								}
 							});
+					
+					cols_used += 2;
 				}
 
+				if ( cols_used > 0 && cols_used < gTransferCols){			
+					Label lab = new Label( gTransfer, SWT.NULL );
+					gd = new GridData();
+					gd.horizontalSpan = gTransferCols - cols_used;
+					lab.setLayoutData(gd);						
+				}
+				
+				cols_used = 0;
+				
 				// Field: Max Aggregate Share
 				if (numTags == 1 && rls[0].getTagAggregateShareRatio() >= 0) {
 					params.max_aggregate_sr = new FloatSwtParameter(gTransfer,
@@ -855,6 +923,8 @@ public class TagSettingsView
 								}
 							});
 
+					cols_used += 2;
+					
 						// max sr action
 
 					String[] ST_ACTION_VALUES = {
@@ -886,6 +956,9 @@ public class TagSettingsView
 									return false;
 								}
 							});
+					
+					cols_used += 2;
+					
 					params.max_aggregate_sr_action.getRelatedControl().setLayoutData(
 							new GridData(SWT.BEGINNING, SWT.CENTER, false, false));
 
@@ -909,10 +982,52 @@ public class TagSettingsView
 								}
 							});
 
+					cols_used += 2;
+					
 					updateTagSRParams( params );
 				}
 				
+				if ( cols_used > 0 && cols_used < gTransferCols){			
+					Label lab = new Label( gTransfer, SWT.NULL );
+					gd = new GridData();
+					gd.horizontalSpan = gTransferCols - cols_used;
+					lab.setLayoutData(gd);						
+				}
+				
 				cols_used = 0;
+				
+				if (supportsMaxDLS){
+					params.maxActiveDownloads = new IntSwtParameter(gTransfer,
+							"tag.maxActiveDownloads", "ConfigView.label.maxdownloads.short", null, 0, Integer.MAX_VALUE,
+							new IntSwtParameter.ValueProcessor() {
+								@Override
+								public Integer getValue(IntSwtParameter p) {
+									int limit = rls[0].getMaxActiveDownloads();
+									if (numTags > 1) {
+										for (int i = 1; i < rls.length; i++) {
+											int nextLimit = rls[i].getMaxActiveDownloads();
+											if (nextLimit != limit) {
+												return 0;
+											}
+										}
+									}
+									return limit;
+								}
+
+								@Override
+								public boolean setValue(IntSwtParameter p, Integer value) {
+									if (value == null) {
+										return false;
+									}
+									for (TagFeatureRateLimit rl : rls) {
+										rl.setMaxActiveDownloads(value);
+									}
+									return true;
+								}
+							});
+
+					cols_used += 2;
+				}
 				
 				if (supportsFPSeeding) {
 					params.firstPrioritySeeding = new BooleanSwtParameter(gTransfer,
@@ -940,9 +1055,14 @@ public class TagSettingsView
 									return changed;
 								}
 							});
+					cols_used += 2;
+				}
+				
+				if ( cols_used > 0 && cols_used < gTransferCols){			
+					Label lab = new Label( gTransfer, SWT.NULL );
 					gd = new GridData();
-					gd.horizontalSpan = 6 - cols_used;
-					params.firstPrioritySeeding.setLayoutData(gd);
+					gd.horizontalSpan = gTransferCols - cols_used;
+					lab.setLayoutData(gd);						
 				}
 			}
 			
@@ -966,6 +1086,27 @@ public class TagSettingsView
 					gd = new GridData(SWT.FILL, SWT.NONE, true, false, 4, 1);
 					gFiles.setLayoutData(gd);
 
+					params.preventDeletion = new BooleanSwtParameter(gFiles,
+							"tag.prevent_delete", "label.prevent.dl.delete",
+							null, new BooleanSwtParameter.ValueProcessor() {
+								@Override
+								public Boolean getValue(BooleanSwtParameter p) {
+									return(fl.getPreventDelete());
+								}
+
+								@Override
+								public boolean setValue(BooleanSwtParameter p, Boolean value) {
+									if (fl.getPreventDelete() == value) {
+										return false;
+									}
+									fl.setPreventDelete(value);
+									return true;
+								}
+							});
+					gd = new GridData();
+					gd.horizontalSpan = 8;
+					params.preventDeletion.setLayoutData(gd);
+					
 					if ( fl.supportsTagInitialSaveFolder()){
 
 						params.initalSaveFolder =

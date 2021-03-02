@@ -251,6 +251,18 @@ DiskManager
 	public int
 	getPercentAllocated();
 
+	public default long[]
+	getLatency()
+	{
+		return( new long[]{ 0, 0 });
+	}
+			    
+	public default String
+	getAllocationTask()
+	{
+		return( null );
+	}
+
 	public String
 	getErrorMessage();
 
@@ -287,7 +299,7 @@ DiskManager
 	public long[]
 	getMoveProgress();
 
-	public File
+	public String
 	getMoveSubTask();
 	
 	public void

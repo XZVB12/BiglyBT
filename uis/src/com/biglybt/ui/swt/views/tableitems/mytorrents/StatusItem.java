@@ -42,6 +42,7 @@ import com.biglybt.ui.swt.views.table.CoreTableColumnSWT;
 import com.biglybt.ui.swt.views.table.TableCellSWT;
 import com.biglybt.ui.swt.views.table.TableRowSWT;
 import com.biglybt.pif.download.Download;
+import com.biglybt.pif.download.Download.SeedingRank;
 import com.biglybt.pif.ui.tables.*;
 import com.biglybt.pifimpl.local.PluginCoreUtils;
 
@@ -159,14 +160,30 @@ public class StatusItem
 			tooltip = null;
 		}
 		
+		if ( 	state != DownloadManager.STATE_STOPPED && 
+				state != DownloadManager.STATE_ERROR &&
+				dm.isDownloadComplete( false )){
+		
+			SeedingRank sr = dm.getSeedingRank();
+		
+			String[] status = sr.getStatus( true );
+		
+			tooltip = tooltip==null?status[0]:(tooltip+"\n\n"+status[0]);
+		
+			if ( status[1] != null ){
+			
+				tooltip += "\n\n" + status[1];
+			}
+		}
+		
 		long	sort_value;
 		
 		String	text;
-		
+				
 		if ( showTrackerErrors && dm.isUnauthorisedOnTracker() && state != DownloadManager.STATE_ERROR ){
 
 			text = dm.getTrackerStatus();
-
+			
 			sort_value = 1100;
 			
 		}else{
@@ -194,7 +211,16 @@ public class StatusItem
 							break;
 						}
 						case DownloadManager.STATE_QUEUED:{
-							sort_value		= 700;
+							
+							if ( dm.getSubState() == DownloadManager.STATE_SEEDING ){
+								
+								sort_value		= 750;	// light seeding
+								
+							}else{
+								
+								sort_value		= 700;
+							}
+							
 							break;
 						}
 						case DownloadManager.STATE_STOPPED:{
@@ -281,7 +307,11 @@ public class StatusItem
 							break;
 						}
 						case DownloadManager.STATE_QUEUED:{
-							sort_value = 700;
+							if ( dm.getSubState() == DownloadManager.STATE_SEEDING ){
+								sort_value = 810;
+							}else{
+								sort_value = 700;
+							}
 							break;
 						}
 						case DownloadManager.STATE_ERROR:{
@@ -300,6 +330,11 @@ public class StatusItem
 			}
 		}
 
+		if ( tooltip != null ){
+			
+			tooltip = text + "\n\n" + tooltip;
+		}
+
 		if ( sort_order == 1 ){
 			
 				// priority based - mix in actual state and priority
@@ -313,7 +348,7 @@ public class StatusItem
 				
 				if ( dl != null ){
 					
-					sort_value += dl.getSeedingRank();
+					sort_value += dl.getSeedingRank().getRank();
 				}
 			}else{
 				
@@ -403,6 +438,17 @@ public class StatusItem
 					cell.setForeground( Utils.colorToIntArray( Colors.blue ));
 				}
 
+			}
+		}else{
+			
+			String old_tt = (String)cell.getToolTip();
+			
+			if ( old_tt != tooltip ){
+			
+				if ( old_tt == null || tooltip == null || !old_tt.equals( tooltip )){
+					
+					cell.setToolTip( tooltip );
+				}
 			}
 		}
 	}

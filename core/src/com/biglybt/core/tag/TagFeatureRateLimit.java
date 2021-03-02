@@ -102,6 +102,13 @@ TagFeatureRateLimit
 	public void
 	setTagUploadPriority(
 		int		priority );
+	
+	public boolean
+	getTagBoost();
+
+	public void
+	setTagBoost(
+		boolean		boost );
 
 		// min share ratio
 
@@ -160,4 +167,11 @@ TagFeatureRateLimit
 	public void
 	setFirstPrioritySeeding(
 		boolean	has_priority );
+	
+	public int
+	getMaxActiveDownloads();
+	
+	public void
+	setMaxActiveDownloads(
+		int		max );
 }

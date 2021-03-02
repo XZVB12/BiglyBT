@@ -31,6 +31,7 @@ import com.biglybt.core.diskmanager.access.DiskAccessRequestListener;
 import com.biglybt.core.diskmanager.cache.CacheFile;
 import com.biglybt.core.stats.CoreStats;
 import com.biglybt.core.stats.CoreStatsProvider;
+import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.DirectByteBuffer;
 
 public class
@@ -231,6 +232,17 @@ DiskAccessControllerImpl
 					DiskAccessRequestImpl.OP_READ,
 					cache_policy );
 
+		try{
+				// do this before actual queue to guarantee that the listener gets the 'queued' callback
+				// before 'complete'
+			
+			listener.requestQueued( request );
+			
+		}catch( Throwable e ){
+			
+			Debug.out( e );
+		}
+		
 		read_dispatcher.queueRequest( request );
 
 		return( request );
@@ -256,6 +268,17 @@ DiskAccessControllerImpl
 					free_buffer?DiskAccessRequestImpl.OP_WRITE_AND_FREE:DiskAccessRequestImpl.OP_WRITE,
 					CacheFile.CP_NONE );
 
+		try{
+				// do this before actual queue to guarantee that the listener gets the 'queued' callback
+				// before 'complete'
+		
+			listener.requestQueued( request );
+			
+		}catch( Throwable e ){
+			
+			Debug.out( e );
+		}
+
 		write_dispatcher.queueRequest( request );
 
 		return( request );
@@ -268,21 +291,54 @@ DiskAccessControllerImpl
 		return(
 			new DiskAccessControllerStats()
 			{
-				final long	read_total_req 		= read_dispatcher.getTotalRequests();
-				final long	read_total_bytes 	= read_dispatcher.getTotalBytes();
-
 				@Override
 				public long
 				getTotalReadRequests()
 				{
-					return( read_total_req );
+					return( read_dispatcher.getTotalRequests());
 				}
 
 				@Override
 				public long
 				getTotalReadBytes()
 				{
-					return( read_total_bytes );
+					return( read_dispatcher.getTotalBytes() );
+				}
+				
+				public long
+				getReadRequestsQueued()
+				{
+					return( read_dispatcher.getQueueSize());
+				}
+				
+				public long
+				getReadBytesQueued()
+				{
+					return( read_dispatcher.getQueuedBytes());				
+				}
+				
+				public long
+				getTotalWriteRequests()
+				{
+					return( write_dispatcher.getTotalRequests());		
+				}				
+
+				public long
+				getTotalWriteBytes()
+				{
+					return( write_dispatcher.getTotalBytes() );
+				}
+				
+				public long
+				getWriteRequestsQueued()
+				{
+					return( write_dispatcher.getQueueSize());
+				}
+				
+				public long
+				getWriteBytesQueued()
+				{
+					return( write_dispatcher.getQueuedBytes());
 				}
 			});
 	}

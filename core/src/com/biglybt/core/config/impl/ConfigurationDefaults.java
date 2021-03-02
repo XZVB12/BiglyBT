@@ -155,7 +155,8 @@ public class ConfigurationDefaults {
     def.put("Listen.Port.Randomize.Range", RandomUtils.LISTEN_PORT_MIN + "-" + RandomUtils.LISTEN_PORT_MAX );
     def.put(ConfigKeys.Connection.BCFG_PEERCONTROL_TCP_PUBLIC_ENABLE, TRUE );
     def.put(ConfigKeys.Connection.BCFG_PEERCONTROL_UDP_PUBLIC_ENABLE, TRUE );
-    def.put("webseed.activation.uses.availability", TRUE );
+    def.put(ConfigKeys.Connection.BCFG_WEBSEED_ACTIVATION_USES_AVAILABILITY, TRUE );
+    def.put(ConfigKeys.Connection.BCFG_WEBSEED_ACTIVATION_MIN_SPEED_KBPS, 5 );
     def.put("IPV6 Enable Support", FALSE );
     def.put(ConfigKeys.Connection.BCFG_IPV_6_CHECK_MULTIPLE_ADDRESS_CHECKS, TRUE );
     def.put("IPV6 Prefer Addresses",FALSE );
@@ -230,6 +231,7 @@ public class ConfigurationDefaults {
     def.put("Merge Same Size Files Tolerance", ZERO );
     def.put(ConfigKeys.File.ICFG_MERGE_SAME_SIZE_FILES_MIN_PIECES, 5 );
     def.put(ConfigKeys.File.BCFG_SKIP_COMP_DL_FILE_CHECKS, FALSE );
+    def.put(ConfigKeys.File.BCFG_FILE_MOVE_ORIGIN_DELETE_FAIL_IS_WARNING, FALSE );
     def.put("Stop Ratio", new Float(0));
     def.put("Stop Peers Ratio", ZERO);
     def.put("Disconnect Seed", TRUE);
@@ -255,6 +257,7 @@ public class ConfigurationDefaults {
     def.put("Ip Filter Ban Discard Ratio", "5.0" );
     def.put("Ip Filter Ban Discard Min KB", new Long(128));
     def.put("Ip Filter Banning Persistent", TRUE);
+    def.put(ConfigKeys.IPFilter.BCFG_IP_FILTER_DONT_BAN_LAN, FALSE );
     def.put("Ip Filter Enable Description Cache", TRUE);
     def.put(ConfigKeys.IPFilter.SCFG_IP_FILTER_AUTOLOAD_FILE, "" );
     def.put(ConfigKeys.IPFilter.SCFG_IP_FILTER_V6_AUTOLOAD_FILE, "");
@@ -265,6 +268,7 @@ public class ConfigurationDefaults {
     def.put("Allow Same IP Peers",FALSE);
     def.put(ConfigKeys.Transfer.ICFG_IPv4_IPv6_CONN_ACTION, ZERO );
     def.put("Use Super Seeding",FALSE);
+    def.put("Enable Light Seeding", TRUE);
     def.put("StartStopManager_bAddForDownloadingSR1", TRUE);
     
     def.put("Start On Login", FALSE );
@@ -606,6 +610,7 @@ public class ConfigurationDefaults {
     def.put( "Alert on close", FALSE );
     def.put( "diskmanager.hashchecking.strategy", ONE );
     def.put( "diskmanager.hashchecking.smallestfirst", TRUE );
+    def.put( ConfigKeys.File.BCFG_DISKMANAGER_ONE_OP_PER_FS, FALSE );
     def.put( "diskmanager.hashchecking.maxactive", ONE );
     def.put( "Default Start Torrents Stopped", FALSE);
     def.put( "Default Start Torrents Stopped Auto Pause", FALSE );
@@ -752,7 +757,8 @@ public class ConfigurationDefaults {
     def.put( "br.backup.auto.everydays", ONE );
     def.put( "br.backup.auto.everyhours", ZERO );
     def.put( "br.backup.auto.retain", 5L );
-
+    def.put( ConfigKeys.BackupRestore.BCFG_BACKUP_PLUGINS, TRUE );
+    
     //temp section for SpeedManagerAlgorithmProviderV2
 
     try{

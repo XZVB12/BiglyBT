@@ -385,6 +385,23 @@ LWSTorrent
 		notSupported();
 	}
 
+   	@Override
+    public String
+	getSource()
+   	{
+ 		return( getDelegate().getSource());
+   	}
+
+	@Override
+    public void
+	setSource(
+		String	str )
+	
+		throws TOTorrentException
+   	{
+		getDelegate().setSource( str );
+	}
+	
 	@Override
 	public void
 	setAdditionalStringProperty(
@@ -571,7 +588,7 @@ LWSTorrent
 	public String
 	getRelationText()
 	{
-		return "LWTorrent: '" + new String(getName()) + "'";
+		return "Internal: '" + new String(getName()) + "'";
 	}
 
 	@Override

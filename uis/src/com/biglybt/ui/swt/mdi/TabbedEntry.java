@@ -336,7 +336,7 @@ public class TabbedEntry
 
 					skinnedDialog.setTitle(	getTitle() + (ds_str.length() == 0 ? "" : (" - " + ds_str)));
 
-					skinnedDialog.open();
+					skinnedDialog.open(  "mdi.popout:" + getId(), true );
 
 				} else {
 
@@ -409,6 +409,7 @@ public class TabbedEntry
 		}
 
 		if (swtItem == null) {
+			destroyEntryAlways();
 			return;
 		}
 

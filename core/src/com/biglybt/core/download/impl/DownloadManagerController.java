@@ -180,7 +180,8 @@ DownloadManagerController
 	private volatile DiskManager 			disk_manager_use_accessors;
 	private DiskManagerListener				disk_manager_listener_use_accessors;
 
-	private DiskManagerPiece[]				disk_manager_pieces_snapshot;
+	private Object							disk_manager_pieces_snapshot_lock = new Object();
+	private volatile DiskManagerPiece[]		disk_manager_pieces_snapshot;
 	
 	final FileInfoFacadeSet		fileFacadeSet = new FileInfoFacadeSet();
 	boolean					files_facade_destroyed;
@@ -197,6 +198,8 @@ DownloadManagerController
 
 	private DownloadManagerStateAttributeListener	dm_attribute_listener;
 	
+	private Object			external_rate_limiters_cow_lock = new Object();
+	
 	private List<Object[]>	external_rate_limiters_cow;
 
 	private String 	errorDetail;
@@ -212,7 +215,7 @@ DownloadManagerController
 	private static final int			ACTIVATION_REBUILD_TIME		= 10*60*1000;
 	private static final int			BLOOM_SIZE					= 64;
 	private volatile BloomFilter		activation_bloom;
-	private volatile long				activation_bloom_create_time	= SystemTime.getCurrentTime();
+	private volatile long				activation_bloom_create_time	= SystemTime.getMonotonousTime();
 	private volatile int				activation_count;
 	private volatile long				activation_count_time;
 
@@ -316,6 +319,14 @@ DownloadManagerController
 
 		try{
 			control_mon.enter();
+			
+			if (download_manager.isDestroyed()) {
+				if (Logger.isEnabled()) {
+					Logger.log(new LogEvent(this, LogIDs.CORE, LogEvent.LT_ERROR,
+							"startDownload() after manager is destroyed"));
+				}
+				return;
+			}
 
 			if ( getState() != DownloadManager.STATE_READY ){
 
@@ -699,7 +710,10 @@ DownloadManagerController
 
 			SimpleTimer.addTickReceiver( this );
 
-			limiters = external_rate_limiters_cow;
+			synchronized( external_rate_limiters_cow_lock ){
+			
+				limiters = external_rate_limiters_cow;
+			}
 
 		}finally{
 
@@ -922,6 +936,8 @@ DownloadManagerController
 
 					download_manager.deleteTorrentFile();
 				}
+
+				download_manager.informStopped( null, stateAfterStopping==DownloadManager.STATE_QUEUED );
 
 				setState( _stateAfterStopping, false );
 
@@ -1252,8 +1268,12 @@ DownloadManagerController
 
 	  				activation_bloom = null;
 
-	  				if ( state_set_by_method == DownloadManager.STATE_STOPPED ){
+	  				if ( 	state_set_by_method == DownloadManager.STATE_STOPPED ||
+	  						state_set_by_method == DownloadManager.STATE_DOWNLOADING ||
+	  						state_set_by_method == DownloadManager.STATE_SEEDING ){
 
+	  						// don't need this anymore once stopped or active
+	  					
 	  					activation_count = 0;
 	  				}
 	  			}
@@ -1620,30 +1640,41 @@ DownloadManagerController
 		LimitedRateGroup	group,
 		boolean				upload )
 	{
+		final boolean not_stopping = getState() != DownloadManager.STATE_STOPPING;	// locking issue here on stop :(
+		
 		PEPeerManager	pm;
 
 		try{
-			control_mon.enter();
-
-			ArrayList<Object[]>	new_limiters = new ArrayList<>(external_rate_limiters_cow == null ? 1 : external_rate_limiters_cow.size() + 1);
-
-			if ( external_rate_limiters_cow != null ){
-
-				new_limiters.addAll( external_rate_limiters_cow );
+			if ( not_stopping ){
+				
+				control_mon.enter();
 			}
 
-			new_limiters.add( new Object[]{ group, Boolean.valueOf(upload)});
-
-			external_rate_limiters_cow = new_limiters;
-
+			synchronized( external_rate_limiters_cow_lock ){
+				
+				ArrayList<Object[]>	new_limiters = new ArrayList<>(external_rate_limiters_cow == null ? 1 : external_rate_limiters_cow.size() + 1);
+	
+				if ( external_rate_limiters_cow != null ){
+	
+					new_limiters.addAll( external_rate_limiters_cow );
+				}
+	
+				new_limiters.add( new Object[]{ group, Boolean.valueOf(upload)});
+	
+				external_rate_limiters_cow = new_limiters;
+			}
+			
 			pm	= peer_manager;
 
 		}finally{
 
-			control_mon.exit();
+			if ( not_stopping ){
+				
+				control_mon.exit();
+			}
 		}
 
-		if ( pm != null ){
+		if ( not_stopping && pm != null ){
 
 			pm.addRateLimiter(group, upload);
 		}
@@ -1653,8 +1684,7 @@ DownloadManagerController
 	getRateLimiters(
 		boolean	upload )
 	{
-		try{
-			control_mon.enter();
+		synchronized( external_rate_limiters_cow_lock ){
 
 			if ( external_rate_limiters_cow == null ){
 
@@ -1674,9 +1704,6 @@ DownloadManagerController
 
 				return( result.toArray( new LimitedRateGroup[ result.size() ]));
 			}
-		}finally{
-
-			control_mon.exit();
 		}
 	}
 
@@ -1685,11 +1712,16 @@ DownloadManagerController
 		LimitedRateGroup	group,
 		boolean				upload )
 	{
+		final boolean not_stopping = getState() != DownloadManager.STATE_STOPPING;	// locking issue here on stop :(
+
 		PEPeerManager	pm;
 
 		try{
-			control_mon.enter();
-
+			if ( not_stopping ){
+			
+				control_mon.enter();
+			}
+			
 			if ( external_rate_limiters_cow != null ){
 
 				ArrayList<Object[]>	new_limiters = new ArrayList<>(external_rate_limiters_cow.size() - 1);
@@ -1718,10 +1750,13 @@ DownloadManagerController
 
 		}finally{
 
-			control_mon.exit();
+			if ( not_stopping ){
+			
+				control_mon.exit();
+			}
 		}
 
-		if ( pm != null ){
+		if ( not_stopping && pm != null ){
 
 			pm.removeRateLimiter(group, upload);
 		}
@@ -1744,11 +1779,15 @@ DownloadManagerController
 	{
 		if ( getState() == DownloadManager.STATE_QUEUED ){
 
+			long	now = SystemTime.getMonotonousTime();
+
 			BloomFilter	bloom = activation_bloom;
 
 			if ( bloom == null ){
 
 				activation_bloom = bloom = BloomFilterFactory.createAddRemove4Bit( BLOOM_SIZE );
+				
+				activation_bloom_create_time = now;
 			}
 
 			byte[]	address_bytes = AddressUtils.getAddressBytes(address);
@@ -1769,12 +1808,11 @@ DownloadManagerController
 
 			Logger.log(new LogEvent(this, LogIDs.CORE, "Activate request for " + getDisplayName() + " from " + address ));
 
-			long	now = SystemTime.getCurrentTime();
 
 				// we don't really care about the bloom filter filling up and giving false positives
 				// as activation events should be fairly rare
 
-			if ( now < activation_bloom_create_time || now - activation_bloom_create_time > ACTIVATION_REBUILD_TIME ){
+			if ( now - activation_bloom_create_time > ACTIVATION_REBUILD_TIME ){
 
 				activation_bloom = BloomFilterFactory.createAddRemove4Bit( BLOOM_SIZE );
 
@@ -1852,13 +1890,11 @@ DownloadManagerController
 			// in the absence of any new activations we persist the last count for the activation rebuild
 			// period
 
-		long	now = SystemTime.getCurrentTime();
+		long	now = SystemTime.getMonotonousTime();
 
-		if ( now < activation_count_time ){
-
-			activation_count_time = now;
-
-		}else if ( now - activation_count_time > ACTIVATION_REBUILD_TIME ){
+		if ( 	activation_count > 0 && 
+				activation_count_time != 0 &&
+				now - activation_count_time > ACTIVATION_REBUILD_TIME ){
 
 			activation_count = 0;
 		}
@@ -1937,6 +1973,8 @@ DownloadManagerController
 			setFailed( DownloadManager.ET_INSUFFICIENT_SPACE, MessageText.getString( "DiskManager.error.nospace" ) );
 			
 		}else{
+			
+			Debug.out( cause );
 			
 			setFailed( DownloadManager.ET_OTHER, reason + ": " + Debug.getNestedExceptionMessage( cause ));
 		}
@@ -2129,6 +2167,8 @@ DownloadManagerController
 		// if it's more than one file just do the scan anyway
 		fileFacadeSet.makeSureFilesFacadeFilled(false);
 		calculateCompleteness( fileFacadeSet.facadeFiles );
+		
+		disk_manager_pieces_snapshot = null;
 	}
 
 	protected void
@@ -2227,8 +2267,7 @@ DownloadManagerController
 	public DiskManagerPiece[] 
 	getDiskManagerPiecesSnapshot()
 	{
-		try{
-			control_mon.enter();
+		synchronized( disk_manager_pieces_snapshot_lock ){
 		
 			if ( disk_manager_pieces_snapshot == null ){
 				
@@ -2236,10 +2275,6 @@ DownloadManagerController
 			}
 			
 			return( disk_manager_pieces_snapshot );
-			
-		}finally{
-			
-			control_mon.exit();
 		}
 	}
 
@@ -2894,6 +2929,11 @@ DownloadManagerController
 		DiskManagerFileInfoSet delegate;
 		fileInfoFacade[] facadeFiles = new fileInfoFacade[0];	// default before torrent avail
 
+		@Override
+		public void load(int[] priorities, boolean[] skipped){
+			delegate.load(priorities, skipped);
+		}
+		
 		@Override
 		public DiskManagerFileInfo[] getFiles() {
 			return facadeFiles;

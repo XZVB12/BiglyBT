@@ -256,7 +256,7 @@ MagnetPluginMDDownloader
 						announce_url,
 						16*1024 );
 
-			TOTorrent meta_torrent = creator.create();
+			TOTorrent meta_torrent = creator.create( true );
 
 			String[] bits = args.split( "&" );
 
@@ -289,7 +289,36 @@ MagnetPluginMDDownloader
 					}
 				}
 			}
-
+			
+			List<String>	extras = plugin.getExtraTrackers();
+						
+			for ( String extra: extras ){
+				
+				try{
+					if ( trackers.contains( extra )){
+						
+						continue;
+					}
+					
+					URL url = new URL( extra );
+					
+					String net = AENetworkClassifier.categoriseAddress( url.getHost());
+					
+					if ( net == AENetworkClassifier.AT_PUBLIC ){
+						
+						if ( networks.isEmpty() || networks.contains( AENetworkClassifier.AT_PUBLIC )){
+							
+							trackers.add( extra );
+						}
+					}else if ( networks.contains( net )){
+						
+						trackers.add( extra );
+					}
+				}catch( Throwable e ){
+					
+				}
+			}
+				
 			if ( trackers.size() > 0 ){
 
 					// stick the decentralised one we created above in position 0 - this will be
@@ -522,7 +551,7 @@ MagnetPluginMDDownloader
 													}
 												}
 
-												listener.reportProgress( 0, md_size );
+												reportProgress( listener, 0, md_size );
 
 												new AEThread2( "" )
 												{
@@ -580,7 +609,7 @@ MagnetPluginMDDownloader
 
 																						completed	= true;
 
-																						listener.reportProgress( md_size, md_size );
+																						reportProgress( listener, md_size, md_size );
 
 																						running_sem.releaseForever();
 																					}
@@ -588,7 +617,7 @@ MagnetPluginMDDownloader
 
 																				if ( !completed ){
 
-																					listener.reportProgress( dl_size, md_size );
+																					reportProgress( listener, dl_size, md_size );
 																				}
 
 																			}catch( Throwable e ){
@@ -972,13 +1001,7 @@ MagnetPluginMDDownloader
 					}
 					
 					try{
-						download.stop();
-
-					}catch( Throwable e ){
-					}
-
-					try{
-						download.remove();
+						download.stopAndRemove(false, false);
 
 					}catch( Throwable e ){
 
@@ -1028,6 +1051,17 @@ MagnetPluginMDDownloader
 				complete_sem.releaseForever();
 			}
 		}
+	}
+
+	private void reportProgress(DownloadListener listener, int downloaded,
+			int total_size) {
+		DownloadManagerState downloadState = core_dm.getDownloadState();
+		if (downloaded == 0 && total_size > 0) {
+			downloadState.setLongAttribute("magnet.torrent.size", total_size);
+		}
+		downloadState.setLongAttribute("magnet.torrent.downloaded", downloaded);
+
+		listener.reportProgress(downloaded, total_size);
 	}
 
 	protected interface

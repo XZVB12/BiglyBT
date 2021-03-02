@@ -147,11 +147,43 @@ public class SBC_DiskOpsView
 					}
 				});
 		
+		tableManager.registerColumn(CoreOperation.class, ColumnFO_Percent.COLUMN_ID,
+				new TableColumnCreationListener() {
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnFO_Percent(column);
+					}
+				});
+		
 		tableManager.registerColumn(CoreOperation.class, ColumnFO_Status.COLUMN_ID,
 				new TableColumnCreationListener() {
 					@Override
 					public void tableColumnCreated(TableColumn column) {
 						new ColumnFO_Status(column);
+					}
+				});
+		
+		tableManager.registerColumn(CoreOperation.class, ColumnFO_SubTask.COLUMN_ID,
+				new TableColumnCreationListener() {
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnFO_SubTask(column);
+					}
+				});
+		
+		tableManager.registerColumn(CoreOperation.class, ColumnFO_FileSystems.COLUMN_ID,
+				new TableColumnCreationListener() {
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnFO_FileSystems(column);
+					}
+				});
+
+		tableManager.registerColumn(CoreOperation.class, ColumnFO_Order.COLUMN_ID,
+				new TableColumnCreationListener() {
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnFO_Order(column);
 					}
 				});
 
@@ -388,29 +420,34 @@ public class SBC_DiskOpsView
 			
 			ProgressCallback prog = op.getTask().getProgressCallback();
 			
-			int	states = prog.getSupportedTaskStates();
-			
-			int state = prog.getTaskState();
-
-			if ((states & ProgressCallback.ST_PAUSE ) != 0 ){
+			if ( prog != null ){
 				
-				if ( state == ProgressCallback.ST_NONE || state == ProgressCallback.ST_QUEUED ){
+				int	states = prog.getSupportedTaskStates();
 				
-					can_stop.add( prog );
-				}
-			}
-			if ((states & ProgressCallback.ST_RESUME ) != 0 ){
-				
-				if ( state == ProgressCallback.ST_PAUSE ){
-				
-					can_start.add( prog );
-				}
-			}
-			if ((states & ProgressCallback.ST_CANCEL ) != 0 ){
-								
-				if ( state != ProgressCallback.ST_CANCEL ){
+				int state = prog.getTaskState();
+	
+				if ((states & ProgressCallback.ST_PAUSE ) != 0 ){
 					
-					can_remove.add( prog );
+					if ( 	state == ProgressCallback.ST_NONE || 
+							state == ProgressCallback.ST_QUEUED ||
+							( state == ProgressCallback.ST_PAUSE && prog.isAutoPause())){
+					
+						can_stop.add( prog );
+					}
+				}
+				if ((states & ProgressCallback.ST_RESUME ) != 0 ){
+					
+					if ( state == ProgressCallback.ST_PAUSE ){
+					
+						can_start.add( prog );
+					}
+				}
+				if ((states & ProgressCallback.ST_CANCEL ) != 0 ){
+									
+					if ( state != ProgressCallback.ST_CANCEL ){
+						
+						can_remove.add( prog );
+					}
 				}
 			}
 		}
@@ -432,7 +469,12 @@ public class SBC_DiskOpsView
 		
 		mi.addListener(SWT.Selection,(ev)->{
 			for ( ProgressCallback cb: can_stop ){
-				cb.setTaskState( ProgressCallback.ST_PAUSE );
+				if ( cb.getTaskState() == ProgressCallback.ST_PAUSE ){				
+					cb.setAutoPause( false );
+				}else{
+				
+					cb.setTaskState( ProgressCallback.ST_PAUSE );
+				}
 			}
 			refreshToolbar();
 		});
@@ -562,7 +604,9 @@ public class SBC_DiskOpsView
 
 			if ((states & ProgressCallback.ST_PAUSE ) != 0 ){
 				
-				if ( state == ProgressCallback.ST_NONE || state == ProgressCallback.ST_QUEUED ){
+				if ( 	state == ProgressCallback.ST_NONE || 
+						state == ProgressCallback.ST_QUEUED ||
+						( state == ProgressCallback.ST_PAUSE && prog.isAutoPause())){
 				
 					can_stop = true;
 				}
@@ -589,6 +633,9 @@ public class SBC_DiskOpsView
 		
 		list.put("stop", can_stop ? UIToolBarItem.STATE_ENABLED : 0);
 		list.put("start", can_start ? UIToolBarItem.STATE_ENABLED : 0);
+		
+		list.put("startstop", can_start ||  can_stop? UIToolBarItem.STATE_ENABLED : 0);
+		
 		list.put("remove", can_remove ? UIToolBarItem.STATE_ENABLED : 0);
 
 	}
@@ -636,38 +683,53 @@ public class SBC_DiskOpsView
 			
 			int state = prog.getTaskState();
 
+			boolean ds_did_something = false;
+			
 			if ((states & ProgressCallback.ST_PAUSE ) != 0 ){
 				
-				if ( state == ProgressCallback.ST_NONE || state == ProgressCallback.ST_QUEUED ){
+				if ( is_stop || is_start_stop ){
+
+					if ( state == ProgressCallback.ST_NONE || state == ProgressCallback.ST_QUEUED ){
 				
-					if ( is_stop || is_start_stop ){
-						
 						prog.setTaskState( ProgressCallback.ST_PAUSE );
 						
-						did_something = true;
+						ds_did_something = true;
+					
+					}else if ( prog.isAutoPause()){
+					
+						prog.setAutoPause( false );
+					
+						ds_did_something = true;
 					}
 				}
 			}
-			if ((states & ProgressCallback.ST_RESUME ) != 0 ){
+			
+			if ( !ds_did_something && (states & ProgressCallback.ST_RESUME ) != 0 ){
 				
-				if ( state == ProgressCallback.ST_PAUSE ){
-				
-					if ( is_start || is_start_stop ){
-						
+				if ( is_start || is_start_stop ){
+
+					if ( state == ProgressCallback.ST_PAUSE ){
+										
 						prog.setTaskState( ProgressCallback.ST_RESUME );
 						
-						did_something = true;
+						ds_did_something = true;
 					}
 				}
 			}
-			if ((states & ProgressCallback.ST_CANCEL ) != 0 ){
+			
+			if ( !ds_did_something && ( states & ProgressCallback.ST_CANCEL ) != 0 ){
 				
 				if ( is_remove ){
 					
 					prog.setTaskState( ProgressCallback.ST_CANCEL );
 					
-					did_something = true;
+					ds_did_something = true;
 				}
+			}
+			
+			if ( ds_did_something ){
+				
+				did_something = true;
 			}
 		}
 		

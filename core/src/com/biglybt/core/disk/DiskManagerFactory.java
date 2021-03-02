@@ -20,6 +20,8 @@
 
 package com.biglybt.core.disk;
 
+import com.biglybt.core.Core;
+
 /**
  * @author parg
  *
@@ -27,8 +29,10 @@ package com.biglybt.core.disk;
 
 
 import com.biglybt.core.disk.impl.DiskManagerImpl;
+import com.biglybt.core.disk.impl.DiskManagerOperationScheduler;
 import com.biglybt.core.disk.impl.DiskManagerUtil;
 import com.biglybt.core.disk.impl.resume.RDResumeHandler;
+import com.biglybt.core.diskmanager.access.DiskAccessController;
 import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.download.DownloadManagerState;
 import com.biglybt.core.torrent.TOTorrent;
@@ -37,6 +41,19 @@ import com.biglybt.core.util.LinkFileMap;
 public class
 DiskManagerFactory
 {
+	public static void
+	initialise(
+		Core		core )
+	{
+		DiskManagerOperationScheduler.initialise( core );
+	}
+	
+	public static DiskAccessController
+	getDiskAccessController()
+	{
+		return( DiskManagerImpl.getDefaultDiskAccessController());
+	}
+	    
 	public static DiskManager
 	create(
 		TOTorrent		torrent,

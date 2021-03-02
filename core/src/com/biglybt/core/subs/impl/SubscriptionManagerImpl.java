@@ -102,6 +102,7 @@ SubscriptionManagerImpl
 	private static final String	CONFIG_FILE = "subscriptions.config";
 	private static final String	LOGGER_NAME = "Subscriptions";
 
+	private static final String CONFIG_DEF_CHECK_MINS		= "subscriptions.check.period.mins.default";
 	private static final String CONFIG_MAX_RESULTS 			= "subscriptions.max.non.deleted.results";
 	private static final String CONFIG_AUTO_START_DLS 		= "subscriptions.auto.start.downloads";
 	private static final String CONFIG_AUTO_START_MIN_MB 	= "subscriptions.auto.start.min.mb";
@@ -5736,6 +5737,13 @@ SubscriptionManagerImpl
 									return;
 								}
 
+								BuddyPluginBeta beta = BuddyPluginUtils.getBetaPlugin();
+
+								if ( beta == null || !beta.getEnableAutoDownloadChats()){
+									
+									return;
+								}
+								
 								final ChatInstance chat = BuddyPluginUtils.getChat( download );
 
 								if ( chat != null ){
@@ -6911,6 +6919,7 @@ SubscriptionManagerImpl
 					download = dm.addDownload( t, torrent_file, data_file );
 
 					download.setFlag( Download.FLAG_DISABLE_AUTO_FILE_MOVE, true );
+					download.setFlag( Download.FLAG_DISABLE_STOP_AFTER_ALLOC, true );
 
 					download.setBooleanAttribute( ta_subs_download, true );
 
@@ -7304,13 +7313,7 @@ SubscriptionManagerImpl
 		boolean			remove_data )
 	{
 		try{
-			download.stop();
-
-		}catch( Throwable e ){
-		}
-
-		try{
-			download.remove( true, remove_data );
+			download.stopAndRemove( true, remove_data );
 
 			log( "Removed download '" + download.getName() + "'" );
 
@@ -7496,6 +7499,31 @@ SubscriptionManagerImpl
   			}
   		}
   	}
+	
+	@Override
+	public int
+	getDefaultCheckFrequencyMins()
+	{
+		int def = COConfigurationManager.getIntParameter( CONFIG_DEF_CHECK_MINS, 120 );
+		
+		if ( def <= 0 ){
+			
+			def = 120;
+		}
+		
+		return( def );
+	}
+
+	@Override
+	public void
+	setDefaultCheckFrequencyMins(
+		int		def )
+	{
+		if ( def != getDefaultCheckFrequencyMins()){
+
+			COConfigurationManager.setParameter( CONFIG_DEF_CHECK_MINS, def );
+		}
+	}
 
 	@Override
 	public int

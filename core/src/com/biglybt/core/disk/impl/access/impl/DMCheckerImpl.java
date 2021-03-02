@@ -28,7 +28,7 @@ import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.disk.*;
 import com.biglybt.core.disk.impl.DiskManagerFileInfoImpl;
 import com.biglybt.core.disk.impl.DiskManagerHelper;
-import com.biglybt.core.disk.impl.DiskManagerRecheckInstance;
+import com.biglybt.core.disk.impl.DiskManagerRecheckScheduler.DiskManagerRecheckInstance;
 import com.biglybt.core.disk.impl.access.DMChecker;
 import com.biglybt.core.disk.impl.piecemapper.DMPieceList;
 import com.biglybt.core.disk.impl.piecemapper.DMPieceMapEntry;
@@ -306,7 +306,7 @@ DMCheckerImpl
 	 	new AEThread2("DMChecker::completeRecheck", true )
 			{
 		  		@Override
-				  public void
+				public void
 				run()
 		  		{
 		  			DiskManagerRecheckInstance	recheck_inst = disk_manager.getRecheckScheduler().register( disk_manager, true );

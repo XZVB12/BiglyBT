@@ -38,14 +38,16 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.*;
 
+import com.biglybt.core.CoreFactory;
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.global.GlobalManagerStats.AggregateStats;
 import com.biglybt.core.internat.MessageText;
-import com.biglybt.core.util.Debug;
+import com.biglybt.core.speedmanager.SpeedLimitHandler;
 import com.biglybt.core.util.DisplayFormatters;
 
 
 import com.biglybt.ui.swt.utils.ColorCache;
+import com.biglybt.ui.swt.views.PeersViewBase;
 
 
 public class
@@ -55,6 +57,9 @@ XferStatsPanel
 	private static final int ALPHA_FOCUS = 255;
 	private static final int ALPHA_NOFOCUS = 150;
 
+	private final boolean	is_global;
+	private final String	config_key;
+	
 	private Display display;
 
 	private BufferedLabel	header_label;
@@ -62,20 +67,15 @@ XferStatsPanel
 	
 	private Scale scale	 = new Scale();
 
-	private boolean	show_samples = COConfigurationManager.getBooleanParameter( "XferStats.show.samples" );
-	
-	
-	private boolean mouseLeftDown = false;
-	private boolean mouseRightDown = false;
-	private int xDown;
-	private int yDown;
+	private boolean	button1_selected;
 
 	private Image img;
 
 	private int alpha = 255;
 
 	private boolean autoAlpha = false;
-
+	private boolean	initialised;
+	
 	private AggregateStats		my_stats;
 
 	private long	latest_sequence	= Long.MAX_VALUE;
@@ -94,12 +94,19 @@ XferStatsPanel
 	public 
 	XferStatsPanel(
 		Composite 	composite,
-		boolean		show_header )
+		boolean		_is_global )
 	{
+		is_global	= _is_global;
+		
+		config_key = is_global?"XferStats.show.samples":"XferStats.local.show.rates";
+		
+		button1_selected 	= COConfigurationManager.getBooleanParameter( config_key );
+
 		display = composite.getDisplay();
 
 		Color white = ColorCache.getColor(display,255,255,255);
-
+		Color dark_grey = Colors.dark_grey;
+		
 		Composite panel = new Composite(composite,SWT.NULL);
 	    GridLayout layout = new GridLayout();
 	    layout.marginBottom = layout.marginTop = layout.marginLeft = layout.marginRight = 
@@ -108,74 +115,67 @@ XferStatsPanel
 	    layout.numColumns = 2;
 	    panel.setLayout(layout);
 	    panel.setBackground( white );
+	    		    	
+    		// header
 	    
-	    if ( show_header ){
-		    	
-	    		// header
-		    
-		    header_label = new BufferedLabel( panel, SWT.DOUBLE_BUFFERED );
-		    GridData grid_data = new GridData( GridData.FILL_HORIZONTAL );
-		    grid_data.horizontalIndent = 5;
-		    header_label.setLayoutData(grid_data);
-		    header_label.getControl().setBackground( white );
-		    
-		    	// controls
-		    
-		    Composite controls = new Composite(panel,SWT.NULL);
-		    layout = new GridLayout();
-		    layout.marginBottom = layout.marginTop = layout.marginLeft = layout.marginRight = 
-		    		layout.marginHeight = layout.marginWidth = 0;
-		    layout.numColumns = 3;
-		    
-		    controls.setLayout(layout);
-		    
-		    Label label = new Label( controls, SWT.NULL );
-		    label.setBackground( white );
-		    Messages.setLanguageText( label, "ConfigView.section.display" );
-		    
-		    Button sample_button	= new Button( controls, SWT.RADIO );
-		    sample_button.setBackground( white );
-		    Messages.setLanguageText( sample_button, "label.samples" );
-		    sample_button.setSelection( show_samples );
-		    
-		    
-		    Button tp_button	= new Button( controls, SWT.RADIO );
-		    tp_button.setBackground( white );
-		    Messages.setLanguageText( tp_button, "label.throughput" );
-		    tp_button.setSelection( !show_samples );
-	
-		    SelectionAdapter sa = 
-		    	new SelectionAdapter(){
-		    		@Override
-		    		public void widgetSelected(SelectionEvent e){
-		    			show_samples = sample_button.getSelection();
-		    			COConfigurationManager.setParameter( "XferStats.show.samples", show_samples );
-		    			requestRefresh();
-		    		}
-				};
-		    
-		    sample_button.addSelectionListener( sa );
-		    tp_button.addSelectionListener( sa );
-		    
-	    }else{
+	    header_label = new BufferedLabel( panel, SWT.DOUBLE_BUFFERED );
+	    GridData grid_data = new GridData( GridData.FILL_HORIZONTAL );
+	    grid_data.horizontalIndent = 5;
+	    header_label.setLayoutData(grid_data);
+	    header_label.getControl().setBackground( white );
+	    header_label.getControl().setForeground( dark_grey );
+	    
+	    if ( !is_global ){
 	    	
-	    	Label label = new Label( panel, SWT.DOUBLE_BUFFERED );
-	    	
-		    GridData grid_data = new GridData( GridData.FILL_HORIZONTAL );
-		    grid_data.horizontalSpan = 2;
-		    grid_data.horizontalIndent = 5;
-		    label.setLayoutData(grid_data);
-		    label.setBackground( white );
-			  
-		    Messages.setLanguageText( label, "XferStatsView.local.header" );
-		    
-	    	show_samples = true;
+	    	Messages.setLanguageText( header_label.getWidget(), "XferStatsView.local.header" );
 	    }
+	    	// controls
+	    
+	    Composite controls = new Composite(panel,SWT.NULL);
+	    layout = new GridLayout();
+	    layout.marginBottom = layout.marginTop = layout.marginLeft = layout.marginRight = 
+	    		layout.marginHeight = layout.marginWidth = 0;
+	    layout.numColumns = 3;
+	    
+	    controls.setLayout(layout);
+	    controls.setBackground( white );
+	    
+	    Label label = new Label( controls, SWT.NULL );
+	    label.setBackground( white );
+	    label.setForeground( dark_grey );
+
+	    Messages.setLanguageText( label, "ConfigView.section.display" );
+	    
+	    Button button1	= new Button( controls, SWT.RADIO );
+	    button1.setBackground( white );
+	    button1.setForeground( dark_grey );
+	    Messages.setLanguageText( button1, is_global?"label.samples":"Pieces.column.speed" );
+	    button1.setSelection( button1_selected );
+	    
+	    
+	    Button button2	= new Button( controls, SWT.RADIO );
+	    button2.setBackground( white );
+	    button2.setForeground( dark_grey );
+	    Messages.setLanguageText( button2, is_global?"label.throughput":"SpeedView.stats.total" );
+	    button2.setSelection( !button1_selected );
+
+	    SelectionAdapter sa = 
+	    	new SelectionAdapter(){
+	    		@Override
+	    		public void widgetSelected(SelectionEvent e){
+	    			button1_selected = button1.getSelection();
+	    			COConfigurationManager.setParameter( config_key, button1_selected );
+	    			requestRefresh();
+	    		}
+			};
+	    
+		button1.addSelectionListener( sa );
+		button2.addSelectionListener( sa );
 	    
 	    	// canvas
 	    
 		canvas = new Canvas(panel,SWT.NO_BACKGROUND);
-		GridData grid_data = new GridData( GridData.FILL_BOTH );
+		grid_data = new GridData( GridData.FILL_BOTH );
 		grid_data.horizontalSpan = 2;
 		
 		canvas.setLayoutData( grid_data );
@@ -201,9 +201,12 @@ XferStatsPanel
 					e.gc.setBackground(Colors.getSystemColor(display, SWT.COLOR_WIDGET_BACKGROUND));
 					e.gc.fillRectangle(e.x, e.y, e.width, e.height);
 
-					e.gc.drawText(
+					if ( !initialised ){
+						
+						e.gc.drawText(
 							MessageText.getString( "v3.MainWindow.view.wait"), 10,
 							10, true);
+					}
 				}
 			}
 		});
@@ -212,21 +215,60 @@ XferStatsPanel
 
 			@Override
 			public void mouseDown(MouseEvent event) {
-				if(event.button == 1) mouseLeftDown = true;
-				if(event.button == 3) mouseRightDown = true;
-				xDown = event.x;
-				yDown = event.y;
-				scale.saveMinX = scale.minX;
-				scale.saveMaxX = scale.maxX;
-				scale.saveMinY = scale.minY;
-				scale.saveMaxY = scale.maxY;
-				scale.saveRotation = scale.rotation;
+				scale.mouseDown( event );
 			}
 
 			@Override
 			public void mouseUp(MouseEvent event) {
-				if(event.button == 1) mouseLeftDown = false;
-				if(event.button == 3) mouseRightDown = false;
+				scale.mouseUp( event );
+				
+				if ( event.button == 3 ){
+					
+					Menu menu = canvas.getMenu();
+
+    				if ( menu != null && !menu.isDisposed()){
+
+    					menu.dispose();
+    				}
+
+    				Node closest = null;
+
+    	    		int		closest_distance = Integer.MAX_VALUE;
+
+    	    		int x = event.x;
+    	    		int y = event.y;
+    	    		
+    	    		for ( Object[] entry: currentPositions ){
+
+    	       			int		e_x = (Integer)entry[0];
+    	     			int		e_y = (Integer)entry[1];
+
+    	       			long	x_diff = x - e_x;
+    	       			long	y_diff = y - e_y;
+
+    	       			int distance = (int)Math.sqrt( x_diff*x_diff + y_diff*y_diff );
+
+    	       			if ( distance < closest_distance ){
+
+    	       				closest_distance 	= distance;
+    	       				closest				= (Node)entry[2];
+    	       			}
+    	    		}
+
+    	    		if ( closest_distance <= 30 ){
+    	    			
+	    				menu = new Menu( canvas );
+			    				
+	    				PeersViewBase.addPeerSetMenu( menu, false, closest.cc );
+	    					    				
+						final Point cursorLocation = Display.getCurrent().getCursorLocation();
+	
+						menu.setLocation( cursorLocation.x, cursorLocation.y );
+	
+	    				menu.setVisible( true );
+    	    		}
+				}
+				
 				refresh();
 			}
 			@Override
@@ -245,37 +287,11 @@ XferStatsPanel
 		canvas.addListener(SWT.MouseWheel, new Listener() {
 			@Override
 			public void handleEvent(Event event) {
-				// System.out.println(event.count);
-				scale.saveMinX = scale.minX;
-				scale.saveMaxX = scale.maxX;
-				scale.saveMinY = scale.minY;
-				scale.saveMaxY = scale.maxY;
-
-				int deltaY = event.count * -5;
-				// scaleFactor>1 means zoom in, this happens when
-				// deltaY<0 which happens when the mouse is moved up.
-				float scaleFactor = 1 - (float) deltaY / 300;
-				if(scaleFactor <= 0) scaleFactor = 0.01f;
-
-				// Scalefactor of e.g. 3 makes elements 3 times larger
-				float moveFactor = 1 - 1/scaleFactor;
-
-				Canvas canvas = ((Canvas) event.widget);
-				Point canvasSize = canvas.getSize();
-				// event.x, event.y are relative to control
-				float mouseXpct = (event.x + 1) / (float) canvasSize.x;
-				float mouseYpct = (event.y + 1) / (float) canvasSize.y;
-				float xOfs = (mouseXpct - 0.5f) * (scale.saveMaxX - scale.saveMinX);
-				float yOfs = (mouseYpct - 0.5f) * (scale.saveMaxY - scale.saveMinY);
-
-				float centerX = ((scale.saveMinX + scale.saveMaxX)/2) + xOfs;
-				scale.minX = scale.saveMinX + moveFactor * (centerX - scale.saveMinX);
-				scale.maxX = scale.saveMaxX - moveFactor * (scale.saveMaxX - centerX);
-
-				float centerY = (scale.saveMinY + scale.saveMaxY)/2 + yOfs;
-				scale.minY = scale.saveMinY + moveFactor * (centerY - scale.saveMinY);
-				scale.maxY = scale.saveMaxY - moveFactor * (scale.saveMaxY - centerY);
-				refresh();
+				
+					// zooming doesn't work properly as the stats canvas adapts to zoom to keep flag spacing
+					/// etc. the same
+				//scale.mouseWheel(event);
+				//refresh();
 			}
 		});
 
@@ -283,60 +299,7 @@ XferStatsPanel
 			@Override
 			public void mouseMove(MouseEvent event) {
 				
-				if(mouseLeftDown && (event.stateMask & SWT.MOD4) == 0) {
-					int deltaX = event.x - xDown;
-					int deltaY = event.y - yDown;
-					float width = scale.width;
-					float height = scale.height;
-					float ratioX = (scale.saveMaxX - scale.saveMinX) / width;
-					float ratioY = (scale.saveMaxY - scale.saveMinY) / height;
-					float realDeltaX = deltaX * ratioX;
-					float realDeltaY  = deltaY * ratioY;
-					scale.minX = scale.saveMinX - realDeltaX;
-					scale.maxX = scale.saveMaxX - realDeltaX;
-					scale.minY = scale.saveMinY - realDeltaY;
-					scale.maxY = scale.saveMaxY - realDeltaY;
-					requestRefresh();
-				}
-				if(mouseRightDown || (mouseLeftDown && (event.stateMask & SWT.MOD4) > 0)) {
-					int deltaX = event.x - xDown;
-					int deltaY = event.y - yDown;
-					int diffX = Math.abs(deltaX);
-					int diffY = Math.abs(deltaY);
-					// Don't start rotating until a few px movement.  Helps when
-					// user just wants to zoom (move up/down) or rotate (move left/right) 
-					// and doesn't have steady hand
-					if (diffY > diffX && diffX <= 3) {
-						deltaX = 0;
-					}
-					if (diffY > diffX && diffY <= 3) {
-						deltaY = 0;
-					}
-					scale.rotation = scale.saveRotation - (float) deltaX / 100;
-
-					// scaleFactor>1 means zoom in, this happens when
-					// deltaY<0 which happens when the mouse is moved up.
-					float scaleFactor = 1 - (float) deltaY / 300;
-					if(scaleFactor <= 0) scaleFactor = 0.01f;
-
-					// Scalefactor of e.g. 3 makes elements 3 times larger
-					float moveFactor = 1 - 1/scaleFactor;
-
-					Canvas canvas = ((Canvas) event.widget);
-					Point canvasSize = canvas.getSize();
-					// event.x, event.y are relative to control
-					float mouseXpct = (xDown + 1) / (float) canvasSize.x;
-					float mouseYpct = (yDown + 1) / (float) canvasSize.y;
-					float xOfs = (mouseXpct - 0.5f) * (scale.saveMaxX - scale.saveMinX);
-					float yOfs = (mouseYpct - 0.5f) * (scale.saveMaxY - scale.saveMinY);
-
-					float centerX = (scale.saveMinX + scale.saveMaxX)/2 + xOfs;
-					scale.minX = scale.saveMinX + moveFactor * (centerX - scale.saveMinX);
-					scale.maxX = scale.saveMaxX - moveFactor * (scale.saveMaxX - centerX);
-
-					float centerY = (scale.saveMinY + scale.saveMaxY)/2 + yOfs;
-					scale.minY = scale.saveMinY + moveFactor * (centerY - scale.saveMinY);
-					scale.maxY = scale.saveMaxY - moveFactor * (scale.saveMaxY - centerY);
+				if ( scale.mouseMove( event )){
 					requestRefresh();
 				}
 			}
@@ -415,32 +378,43 @@ XferStatsPanel
 		canvas.setLayoutData(data);
 	}
 
-	protected void
+	public void
 	init(
 		AggregateStats		_stats )
 	{
+		initialised	= true;
+		
 		my_stats	= _stats;
+		
+		requestRefresh();
 	}
 	
 	private String
 	getBPSForDisplay(
 		long	bytes )
 	{
-		if ( show_samples ){
+		if ( is_global || button1_selected ){
 			
-			bytes = bytes/60;
+			if ( button1_selected ){
+				
+				bytes = bytes/60;
+				
+			}else{
+				
+				if ( tp_ratio == 0 ){
+					
+					return( "" );
+				}
+			
+				bytes = (long)(( tp_ratio * bytes)/60);
+			}
+			
+			return( DisplayFormatters.formatByteCountToKiBEtcPerSec( bytes ));
 			
 		}else{
 			
-			if ( tp_ratio == 0 ){
-				
-				return( "" );
-			}
-		
-			bytes = (long)(( tp_ratio * bytes)/60);
+			return( DisplayFormatters.formatByteCountToKiBEtc( bytes ));
 		}
-		
-		return( DisplayFormatters.formatByteCountToKiBEtcPerSec( bytes ));
 	}
 	
 	public void
@@ -487,8 +461,7 @@ XferStatsPanel
 			return;
 		}
 
-		scale.width 	= size.width;
-		scale.height 	= size.height;
+		scale.setSize( size );
 
 		boolean needNewImage = img == null || img.isDisposed();
 		if (!needNewImage) {
@@ -530,7 +503,8 @@ XferStatsPanel
 			
 			latest_sequence = my_stats.getSequence();
 			
-			if ( header_label != null ){
+			if ( is_global ){
+				
 				float samples 		= my_stats.getSamples();
 				float population	= my_stats.getEstimatedPopulation();
 				
@@ -601,8 +575,19 @@ XferStatsPanel
 					
 					long[]	to_counts	= entry2.getValue();
 					
-					long	to_recv = to_counts[0];
-					long	to_sent = to_counts[1];
+					long	to_recv;
+					long	to_sent;
+					
+					if ( is_global || button1_selected ){
+						
+						to_recv = to_counts[0];
+						to_sent = to_counts[1];
+						
+					}else{
+						
+						to_recv = to_counts[2];
+						to_sent = to_counts[3];
+					}
 					
 					Image to_image = ImageRepository.getCountryFlag( to_cc, false );
 	
@@ -655,9 +640,11 @@ XferStatsPanel
 			List<Node>	dests_recv = new ArrayList<>( dest_recv_map.values());
 			List<Node>	dests_sent = new ArrayList<>( dest_sent_map.values());
 			
-			float	lhs = scale.minX;
-			float	rhs = scale.maxX - flag_width -10;
+			float	lhs = scale.getMinX();
+			float	rhs = scale.getMaxX() - flag_width -10;
 				
+			boolean hide_nodes = origins.size() > 1;
+			
 			for ( int i=0;i<3;i++){
 				
 				int flag_x 	= (int)( -1000 + scale.getReverseHeight( 5 ));
@@ -681,7 +668,24 @@ XferStatsPanel
 				}else{
 					
 					nodes 	= origins;
-					flag_y	= -flag_height/2;
+					
+					if ( dests_recv.isEmpty() && dests_sent.isEmpty()){
+						
+						flag_y	= -flag_height/2;
+						
+					}else if ( dests_recv.isEmpty()){
+						
+						flag_y	= (int)( -1000 + text_height );
+						
+					}else if ( dests_sent.isEmpty()){
+						
+						flag_y	= (int)( 1000 - flag_height - text_height - scale.getReverseHeight( 5 ));
+						
+					}else{
+						
+						flag_y	= -flag_height/2;
+					}
+					
 					odd		= true;
 				}
 		
@@ -704,8 +708,8 @@ XferStatsPanel
 					pad = 0;
 					
 				}else{
-				
-					pad = (int)((( rhs - lhs) - nodes.size() * 2 * flag_width ) / 2 );
+									
+					pad = (int)((( lhs + 2000 ) -  ( nodes.size() * 2 * flag_width ) / 2 ));
 				}
 				
 				for ( Node node: nodes ){
@@ -716,10 +720,17 @@ XferStatsPanel
 					if ( 	node.x_pos > rhs || 
 							node.x_pos < lhs ){
 						
-						node.hidden = true;
+						if ( hide_nodes ){
 						
-						flag_x += flag_width;
-										
+							node.hidden = true;
+							
+							flag_x += flag_width;
+							
+						}else{
+							
+							flag_x += flag_width * 2;
+						}
+						
 					}else{
 														
 						flag_x += flag_width * 2;
@@ -801,9 +812,9 @@ XferStatsPanel
 		}finally{
 			
 			gc.dispose();
-		}
 
-		canvas.redraw();
+			canvas.redraw();
+		}
 	}
 
 
@@ -1088,22 +1099,7 @@ XferStatsPanel
 		private String
 		getToolTip()
 		{
-			String tt = cc;
-						
-			try{
-				Locale country_locale = new Locale( "", cc );
-
-				country_locale.getISO3Country();
-				
-				String name = country_locale.getDisplayCountry( Locale.getDefault());
-				
-				if ( name != null && !name.isEmpty()){
-					
-					tt = name + " (" + cc + ")";
-				}
-				
-			}catch( Throwable e ){				
-			}
+			String tt = Utils.getCCString( cc );
 			
 			if ( type == 0 ){
 				

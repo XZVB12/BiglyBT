@@ -89,7 +89,7 @@ TransferProcessor
    * @param processor_type read or write processor
    * @param max_rate_limit to use
    */
-  public TransferProcessor( final int _processor_type, LimitedRateGroup max_rate_limit, boolean multi_threaded ) {
+  public TransferProcessor( NetworkManager	net_man,  final int _processor_type, LimitedRateGroup max_rate_limit, boolean multi_threaded ) {
 	this.processor_type = _processor_type;
     this.max_rate 		= max_rate_limit;
     this.multi_threaded	= multi_threaded;
@@ -160,7 +160,7 @@ TransferProcessor
     		}
     	};
 
-    main_controller = new EntityHandler( processor_type, main_rate_handler );
+    main_controller = new EntityHandler( net_man, processor_type, main_rate_handler );
   }
 
 
@@ -173,6 +173,14 @@ TransferProcessor
    * @param group rate limit group
    */
   public void registerPeerConnection( NetworkConnectionBase connection, boolean upload ) {
+	  
+	if ( connection.isClosed()){
+		
+		Debug.out( "Connection is closed" );
+		
+		return;
+	}
+	
     final ConnectionData conn_data = new ConnectionData();
 
     try {  connections_mon.enter();
@@ -245,7 +253,7 @@ TransferProcessor
    * Cancel upload handling for the given peer connection.
    * @param connection to cancel
    */
-  public void deregisterPeerConnection( NetworkConnectionBase connection ) {
+  public boolean deregisterPeerConnection( NetworkConnectionBase connection ) {
     try{ connections_mon.enter();
       ConnectionData conn_data = (ConnectionData)connections.remove( connection );
 
@@ -273,7 +281,7 @@ TransferProcessor
     finally{ connections_mon.exit(); }
 
 
-    main_controller.cancelPeerConnection( connection );
+    return( main_controller.cancelPeerConnection( connection ));
   }
 
   public void
@@ -432,6 +440,13 @@ TransferProcessor
 	final NetworkConnectionBase 	connection,
 	int 							partition_id )
   {
+	  if ( connection.isClosed()){
+
+		  Debug.out( "Connection is closed" );
+
+		  return;
+	  }
+		
     ConnectionData connection_data = null;
 
     try{

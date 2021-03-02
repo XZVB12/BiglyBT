@@ -19,6 +19,7 @@
 package com.biglybt.ui.swt.maketorrent;
 
 import java.io.File;
+import java.net.URL;
 import java.util.*;
 import java.util.List;
 
@@ -54,6 +55,7 @@ NewTorrentWizard
 	private static String	default_open_dir 	= COConfigurationManager.getStringParameter( "CreateTorrent.default.open", "" );
 	private static String	default_save_dir 	= COConfigurationManager.getStringParameter( "CreateTorrent.default.save", "" );
 	private static String	comment 			= COConfigurationManager.getStringParameter( "CreateTorrent.default.comment", "" );
+	private static String	source 				= COConfigurationManager.getStringParameter( "CreateTorrent.default.source", "" );
 	private static int 		tracker_type 		= COConfigurationManager.getIntParameter( "CreateTorrent.default.trackertype", TT_LOCAL );
 
 	static{
@@ -78,7 +80,7 @@ NewTorrentWizard
   File	byo_desc_file;
   Map	byo_map;
 
-  String trackerURL = TT_EXTERNAL_DEFAULT;
+  private String _trackerURL = TT_EXTERNAL_DEFAULT;
 
   boolean computed_piece_size = true;
   long	  manual_piece_size;
@@ -119,9 +121,25 @@ NewTorrentWizard
     });
 
     trackers.add(new ArrayList());
-    trackerURL = Utils.getLinkFromClipboard(display);
+    
+    String tracker = Utils.getLinkFromClipboard(display);
+    
+    if ( !isValidTracker( tracker )){
+    
+    	tracker = getLastTrackerUsed();
+    	
+    	if ( !isValidTracker( tracker )){
+    		
+    		tracker = TT_EXTERNAL_DEFAULT;
+    	}
+    }
+    
+    setTrackerURL( tracker );
+    
     ModePanel panel = new ModePanel(this, null);
+    
     createDropTarget(getWizardWindow());
+    
     this.setFirstPanel(panel);
 
   }
@@ -141,6 +159,56 @@ NewTorrentWizard
 	COConfigurationManager.setParameter( "CreateTorrent.default.trackertype", tracker_type );
   }
 
+  protected String
+  getTrackerURL()
+  {
+	  return( _trackerURL );
+  }
+  
+  protected void
+  setTrackerURL(
+	String		t )
+  {
+	  if ( t == null ){
+		  
+		  t = "";
+		  
+	  }else{
+		  
+		  t = t.trim();
+	  }
+	  
+	  _trackerURL = t;
+	  
+	  if ( isValidTracker( t )){
+		  
+		  COConfigurationManager.setParameter( "CreateTorrent.tracker.last.used", t );
+	  }
+  }
+  
+  protected boolean
+  isValidTracker(
+	String		tracker )
+  {
+	  try{
+		 URL url = new URL( tracker );
+		  
+		 String host = url.getHost();
+	  
+		 return( !host.isEmpty());
+		 
+	  }catch( Throwable e ){
+	  }
+		  
+	  return( false );
+  }
+  
+  protected String
+  getLastTrackerUsed()
+  {
+	  return( COConfigurationManager.getStringParameter( "CreateTorrent.tracker.last.used", "" ));
+  }
+  
   protected String
   getDefaultOpenDir()
   {
@@ -197,6 +265,17 @@ NewTorrentWizard
   String getComment() {
     return (comment);
   }
+  
+  void setSource(String s) {
+	  source = s.trim();
+
+	  COConfigurationManager.setParameter("CreateTorrent.default.source",source);
+  }
+
+  String getSource() {
+	  return (source);
+  }
+  
   private void createDropTarget(final Control control) {
     DropTarget dropTarget = new DropTarget(control, DND.DROP_DEFAULT | DND.DROP_MOVE | DND.DROP_COPY | DND.DROP_LINK);
     dropTarget.setTransfer(new Transfer[] { FixedURLTransfer.getInstance(), FileTransfer.getInstance()});
@@ -233,7 +312,7 @@ NewTorrentWizard
 	          break;
           }
         } else if (getCurrentPanel() instanceof ModePanel) {
-        	trackerURL = ((FixedURLTransfer.URLType)event.data).linkURL;
+        	setTrackerURL(((FixedURLTransfer.URLType)event.data).linkURL);
         	((ModePanel) getCurrentPanel()).updateTrackerURL();
         }
        }

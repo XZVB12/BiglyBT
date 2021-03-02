@@ -29,6 +29,7 @@ import com.biglybt.core.CoreFactory;
 import com.biglybt.core.download.DownloadManagerState;
 import com.biglybt.core.global.GlobalManager;
 import com.biglybt.core.global.GlobalManagerAdapter;
+import com.biglybt.core.peer.PEPeer;
 import com.biglybt.core.peer.PEPeerManager;
 import com.biglybt.core.util.*;
 import com.biglybt.pif.PluginInterface;
@@ -56,7 +57,8 @@ BuddyPluginTracker
 	private  static final Object	PEER_UPLOAD_PRIORITY_KEY		= new Object();
 
 	private static final Object	PEER_STATS_KEY	= new Object();
-
+	private static final Object PB_PEER_KEY		= new Object();
+	
 	public static final int BUDDY_NETWORK_IDLE			= 1;
 	public static final int BUDDY_NETWORK_OUTBOUND		= 2;
 	public static final int BUDDY_NETWORK_INBOUND		= 3;
@@ -435,7 +437,7 @@ BuddyPluginTracker
 
 						if ( lan && !peer.isLANLocal()){
 
-							AddressUtils.addLANRateLimitAddress( ip );
+							AddressUtils.addExplicitLANRateLimitAddress( ip );
 
 							peer.resetLANLocalStatus();
 						}
@@ -710,8 +712,14 @@ outer:
 	public void
 	addPartialBuddy(
 		Download	download,
-		Peer		peer )
+		Peer		peer,
+		boolean		manual )
 	{
+		if ( peer.getState() == Peer.DISCONNECTED && !manual ){
+			
+			return;
+		}
+		
 		PartialBuddy pb = new PartialBuddy( this, peer );
 		
 		String key = pb.getKey();
@@ -727,6 +735,8 @@ outer:
 				pbd = new PartialBuddyData( pb );
 				
 				partial_buddies.put( key, pbd );
+				
+				peer.setUserData( PB_PEER_KEY,  key );
 				
 				is_new = true;
 				
@@ -752,7 +762,7 @@ outer:
 										
 					InetSocketAddress isa = AddressUtils.getSocketAddress( pb.getIP());
 					
-					AddressUtils.addLANRateLimitAddress( isa );
+					AddressUtils.addExplicitLANRateLimitAddress( isa );
 					
 					if ( !peer.isLANLocal()){
 					
@@ -862,7 +872,7 @@ outer:
 				
 				InetSocketAddress isa = AddressUtils.getSocketAddress( pb.getIP());
 
-				AddressUtils.removeLANRateLimitAddress( isa );
+				AddressUtils.removeExplicitLANRateLimitAddress( isa );
 			}
 		}catch( Throwable e ){
 			
@@ -907,17 +917,25 @@ outer:
 	public void
 	removePartialBuddy(
 		Download	download,
-		Peer		peer )
-	{
-		PartialBuddy pb = new PartialBuddy( this, peer );
-		
-		String key = pb.getKey();
-		
+		Peer		peer,
+		boolean		manual )
+	{		
 		boolean removed = false;
 		
 		boolean do_lan = plugin.getPeersAreLANLocal();
 		
+		PartialBuddy pb;
+		
 		synchronized( online_buddies ){
+			
+			String key = (String)peer.getUserData( PB_PEER_KEY );
+			
+			if ( key == null ){
+				
+				PartialBuddy temp_pb = new PartialBuddy( this, peer );
+				
+				key = temp_pb.getKey();
+			}
 			
 			PartialBuddyData pbd = partial_buddies.get( key );
 				
@@ -932,7 +950,7 @@ outer:
 			
 				// changed so that single dl removal removes partial buddy
 			
-			if ( do_lan ){
+			if ( do_lan && manual ){
 				
 				pbd.downloads.clear();
 			}
@@ -952,7 +970,7 @@ outer:
 					
 					InetSocketAddress isa = AddressUtils.getSocketAddress( pb.getIP());
 
-					AddressUtils.removeLANRateLimitAddress( isa );
+					AddressUtils.removeExplicitLANRateLimitAddress( isa );
 					
 					peer.resetLANLocalStatus();
 				}
@@ -1647,7 +1665,7 @@ outer:
 							
 							if ( add_it ){
 								
-								addPartialBuddy( d, peer );
+								addPartialBuddy( d, peer, false );
 							}
 						}
 					}
@@ -1969,6 +1987,7 @@ outer:
 
 			if ( 	announce == null ||
 					announce.getResponseType() != DownloadAnnounceResult.RT_SUCCESS ||
+					announce.getPeers() == null ||
 					announce.getPeers().length < 2 ){
 
 				return( false );

@@ -804,13 +804,19 @@ public class WriteController implements CoreStatsProvider, AEDiagnosticsEvidence
    * Remove the given entity from the controller.
    * @param entity to remove from write processing
    */
-  public void removeWriteEntity( RateControlledEntity entity ) {
+  public boolean removeWriteEntity( RateControlledEntity entity ) {
+	boolean found = false;
     try {  entities_mon.enter();
       if( entity.getPriority() == RateControlledEntity.PRIORITY_HIGH ) {
         //copy-on-write
         ArrayList high_new = new ArrayList( high_priority_entities );
-        high_new.remove( entity );
-        high_priority_entities = high_new;
+        if ( high_new.remove( entity )){
+        	high_priority_entities = high_new;
+        	
+        	found = true;
+        }else{
+        	Debug.out( "entity not found" );
+        }
       }
       else {
         //copy-on-write
@@ -818,16 +824,25 @@ public class WriteController implements CoreStatsProvider, AEDiagnosticsEvidence
 	        ArrayList boosted_new = new ArrayList( boosted_priority_entities );
 	        boosted_new.remove( entity );
 	        boosted_priority_entities = boosted_new;
+	        
+	        found = true;
     	}else{
 	        ArrayList norm_new = new ArrayList( normal_priority_entities );
-	        norm_new.remove( entity );
-	        normal_priority_entities = norm_new;
+	        if ( norm_new.remove( entity )){
+	        	normal_priority_entities = norm_new;
+	        	
+	        	found = true;
+	        }else{
+	        	Debug.out( "entity not found" );
+	        }
     	}
       }
 
       entity_count = normal_priority_entities.size() + boosted_priority_entities.size() + high_priority_entities.size();
     }
     finally {  entities_mon.exit();  }
+    
+    return( found );
   }
 
   public int

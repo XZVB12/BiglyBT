@@ -144,6 +144,12 @@ TagTypeBase
 		return( manager );
 	}
 
+	protected TaggableResolver
+	getResolver()
+	{
+		return( manager.getResolver( tag_type ));
+	}
+	
 	protected Taggable
 	resolveTaggable(
 		String		id )
@@ -909,6 +915,11 @@ TagTypeBase
  		String	old_name,
  		String	new_name )
  	{
+ 		if ( old_name == new_name || ( old_name != null && old_name.equals( new_name ))){
+ 			
+ 			return;
+ 		}
+ 		
  		synchronized( this ){
  			
  			if ( old_name != null ){
@@ -928,11 +939,11 @@ TagTypeBase
  				if ( tg == null ){
  					
  					tg = new TagGroupImpl( new_name );
- 					
- 					manager.tagGroupCreated( this, tg );
- 					
+ 										
  					tag_groups.put( new_name, tg );
- 				}
+
+ 					manager.tagGroupCreated( this, tg );
+  				}
  				
  				tg.addTag( tag );
  			}
@@ -956,11 +967,11 @@ TagTypeBase
  				
  				if ( result == null ){
  					
- 					result = new TagGroupImpl( name );
- 					
- 					manager.tagGroupCreated( this, result );
+ 					result = new TagGroupImpl( name ); 					
  					
  					tag_groups.put( name, result );
+
+ 					manager.tagGroupCreated( this, result );
  				}
  				
  				return( result );

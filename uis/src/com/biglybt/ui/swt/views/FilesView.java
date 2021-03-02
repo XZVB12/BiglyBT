@@ -141,7 +141,7 @@ public class FilesView
 
   public static final String MSGID_PREFIX = "FilesView";
 
-	private DownloadManager[] managers = new DownloadManager[0];
+  private DownloadManager[] managers = new DownloadManager[0];
 
   public boolean hide_dnd_files;
   public boolean tree_view;
@@ -343,6 +343,38 @@ public class FilesView
 		return tableParent;
 	}
 
+	private void
+	addManagerListeners(
+		DownloadManager[]		managers )
+	{
+		if ( managers == null ){
+			return;
+		}
+		
+		for (DownloadManager manager: managers ){
+			manager.getDownloadState().addListener(this,
+					DownloadManagerState.AT_FILE_LINKS2,
+					DownloadManagerStateAttributeListener.WRITTEN);
+
+			manager.addListener(this);
+		}
+	}
+	
+	private void
+	removeManagerListeners(
+		DownloadManager[]		managers )
+	{
+		if ( managers == null ){
+			return;
+		}
+
+		for (DownloadManager manager: managers ){
+			manager.getDownloadState().removeListener(this,
+					DownloadManagerState.AT_FILE_LINKS2,
+					DownloadManagerStateAttributeListener.WRITTEN);
+			manager.removeListener(this);
+		}
+	}
 
   // @see TableDataSourceChangedListener#tableDataSourceChanged(java.lang.Object)
 	@Override
@@ -359,12 +391,7 @@ public class FilesView
 		
 		if (tv != null) {
 	
-			for (DownloadManager manager: managers ){
-				manager.getDownloadState().removeListener(this,
-						DownloadManagerState.AT_FILE_LINKS2,
-						DownloadManagerStateAttributeListener.WRITTEN);
-				manager.removeListener(this);
-			}
+			removeManagerListeners( managers );
 		}
 
 		if (tags != null && tags.length > 0 && tag_listener != null) {
@@ -416,13 +443,7 @@ public class FilesView
 			return;
 		}
 
-		for (DownloadManager manager: managers ){
-			manager.getDownloadState().addListener(this,
-					DownloadManagerState.AT_FILE_LINKS2,
-					DownloadManagerStateAttributeListener.WRITTEN);
-
-			manager.addListener(this);
-		}
+		addManagerListeners( managers );
 
 		if (!tv.isDisposed()) {
 
@@ -501,7 +522,19 @@ public class FilesView
 		
 		if ( file != null ){
 			
-			TableRowCore[] rows = tv.getVisibleRows();
+			TableRowCore[] rows;
+			
+			if ( tree_view ){
+				
+					// have to get all rows, not just visible ones, as changed file might be collasped
+					// but we still want to update parent state
+				
+				rows = tv.getRowsAndSubRows( true );	
+				
+			}else{
+				
+				rows = tv.getVisibleRows();
+			}
 			
 			for ( TableRowCore row: rows ){
 				
@@ -705,15 +738,21 @@ public class FilesView
 			
 			List<FilesViewNodeInner>	nodes = Arrays.asList( node );
 			
-			if ( node.isExpanded()){
-								
-				doTreeAction(nodes, 1, false );
+			try{
+				tv.setRedrawEnabled( false );
 				
-			}else{
+				if ( node.isExpanded()){
 									
-				doTreeAction(nodes, 0, false );
+					doTreeAction(nodes, 1, false );
+					
+				}else{
+										
+					doTreeAction(nodes, 0, false );
+				}
+			}finally{
+				
+				tv.setRedrawEnabled( true );
 			}
-			
 			return;
 			
 		}else if ( fileInfo.getIndex() == -1 ){
@@ -1169,6 +1208,9 @@ public class FilesView
 				hide_dnd_files = COConfigurationManager.getBooleanParameter(
 						"FilesView.hide.dnd");
 				COConfigurationManager.addParameterListener("FilesView.hide.dnd", this);
+				
+				addManagerListeners( managers );
+				
 				break;
 			}
 
@@ -1176,14 +1218,9 @@ public class FilesView
 				COConfigurationManager.removeParameterListener("FilesView.hide.dnd",
 						this);
 
-				for (DownloadManager manager : managers) {
-					manager.getDownloadState().removeListener(this,
-							DownloadManagerState.AT_FILE_LINKS2,
-							DownloadManagerStateAttributeListener.WRITTEN);
-
-					manager.removeListener(this);
-				}
-
+				removeManagerListeners( managers );
+				
+				break;
 			}
 		}
 	}
@@ -1288,6 +1325,48 @@ public class FilesView
 		if (e.keyCode == SWT.F2 && (e.stateMask & SWT.MODIFIER_MASK) == 0) {
 			FilesViewMenuUtil.rename(tv, tv.getSelectedDataSources(true), true, false,false);
 			e.doit = false;
+		}else if ( e.character == ' ' ){
+		
+			Object[] data_sources = tv.getSelectedDataSources().toArray();
+						
+			List<DiskManagerFileInfo>	files = new ArrayList<>();
+			
+			boolean all_skipped = true;
+
+			for ( int i=0;i<data_sources.length;i++ ){
+				
+				DiskManagerFileInfo file = (DiskManagerFileInfo)data_sources[i];
+												
+				if ( file instanceof FilesViewNodeInner ){
+					
+					FilesViewNodeInner inner = (FilesViewNodeInner)file;
+					
+					inner.getFiles( files, true );
+					
+					if ( all_skipped ){
+						
+						int state = inner.getSkippedState();
+												
+						if ( state != 0 ){
+							
+							all_skipped = false;
+						}
+					}
+				}else{
+				
+					files.add( file );
+
+					if ( all_skipped ){
+						
+						if ( !file.isSkipped()){
+							
+							all_skipped = false;
+						}
+					}
+				}
+			}
+			
+			FilesViewMenuUtil.setSkipped( files, !all_skipped, 2, true );
 		}
 	}
 

@@ -20,6 +20,8 @@
 
 package com.biglybt.core.disk.impl;
 
+import com.biglybt.core.CoreOperation;
+import com.biglybt.core.CoreOperationTask;
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.disk.*;
@@ -39,6 +41,7 @@ import com.biglybt.core.torrent.TOTorrent;
 import com.biglybt.core.torrent.TOTorrentException;
 import com.biglybt.core.torrent.TOTorrentFile;
 import com.biglybt.core.util.*;
+import com.biglybt.core.util.FileUtil.ProgressListener;
 
 import java.io.File;
 import java.io.IOException;
@@ -151,59 +154,101 @@ DiskManagerUtil
 	}
 
 	public static void
-	doFileExistenceChecks(
+	doFileExistenceChecksAfterSkipChange(
 		DiskManagerFileInfoSet 	fileSet,
 		boolean[] 				toCheck,
-		DownloadManager 		dm,
-		boolean 				allowAlloction )
+		boolean					isSkipped,
+		DownloadManager 		dm )
 	{
+			// we can end up here during construction, the file situation should be correct so no point
+			// in running the tests
+		
+		if ( !dm.isConstructed()){
+			
+			return;
+		}
+		
 		DiskManagerFileInfo[] files = fileSet.getFiles();
 
-		int lastPieceScanned = -1;
-		int windowStart = -1;
-		int windowEnd = -1;
+		boolean[]	interesting = new boolean[files.length];
+		
+		for (int i = 0; i<files.length;i++ ){
+			
+			DiskManagerFileInfo file = files[i];
+			
+			if ( toCheck[i] ){
+			
+				interesting[i] = true;
+				
+				int firstPiece 	= file.getFirstPieceNumber();
 
+				for ( int j=i-1; j>=0; j-- ){
+					
+					if ( files[j].getLastPieceNumber() == firstPiece ){
+				
+						interesting[j] = true;
+						
+					}else{
+						
+						break;
+					}
+				}
+				
+				int lastPiece 	= file.getLastPieceNumber();
+
+				for ( int j=i+1; j<files.length; j++ ){
+					
+					if ( files[j].getFirstPieceNumber() == lastPiece ){
+				
+						interesting[j] = true;
+						
+					}else{
+						
+						break;
+					}
+				}
+			}
+		}
+		
+		List<DiskManagerFileInfo>	reallocs = new ArrayList<>();
+		
 		String[] types = DiskManagerImpl.getStorageTypes(dm);
 
-		// sweep over all files to see if adjacent files of changed files can be deleted or need allocation
-		for(int i = 0; i< files.length;i++)
-		{
-			int firstPiece = files[i].getFirstPieceNumber();
-			int lastPiece = files[i].getLastPieceNumber();
+		for ( int i=0; i<interesting.length; i++ ){
+			
+			if ( interesting[i] ){
 
-			if(toCheck[i])
-			{ // found a file that changed, scan adjacent files
-				if(lastPieceScanned < firstPiece)
-				{ // haven't checked the preceding files, slide backwards
-					windowStart = firstPiece;
-					while(i > 0 && files[i-1].getLastPieceNumber() >= windowStart)
-						i--;
-				}
-
-				if(windowEnd < lastPiece)
-					windowEnd = lastPiece;
-			}
-
-			if((windowStart <= firstPiece && firstPiece <= windowEnd) || (windowStart <= lastPiece && lastPiece <= windowEnd))
-			{ // file falls in current scanning window, check it
-				File currentFile = files[i].getFile(true);
-				if(!RDResumeHandler.fileMustExist(dm, files[i]))
-				{
-					int	st = convertDMStorageTypeFromString( types[i] );
-					if( st == DiskManagerFileInfo.ST_COMPACT || st == DiskManagerFileInfo.ST_REORDER_COMPACT ){
-						currentFile.delete();
+				DiskManagerFileInfo file = files[i];
+				
+				if ( RDResumeHandler.fileMustExist(dm, fileSet, file )){
+					
+					if ( !isSkipped ){
+						
+						if ( !file.exists()){
+							
+							reallocs.add( file );
+						}
 					}
-				} else if(allowAlloction && !files[i].exists())	{
-					/*
-					 * file must exist, does not exist and we probably just changed to linear
-					 * mode, assume that (re)allocation of adjacent files is necessary
-					 */
-					dm.setDataAlreadyAllocated(false);
+				}else{
+					
+					if ( isSkipped ){
+						
+						int	st = convertDMStorageTypeFromString( types[i] );
+						
+						if ( st == DiskManagerFileInfo.ST_COMPACT || st == DiskManagerFileInfo.ST_REORDER_COMPACT ){
+							
+							File currentFile = file.getFile(true);
+							
+							currentFile.delete();
+						}
+					}
 				}
-				lastPieceScanned = lastPiece;
 			}
-
-
+		}
+		
+		if ( !reallocs.isEmpty()){
+			
+			dm.requestAllocation( reallocs );
 		}
 	}
 
@@ -340,6 +385,15 @@ DiskManagerUtil
 		protected long    downloaded;
 		protected String  last_error;
 		
+		protected void
+		load(
+			int		_priority,
+			boolean	_skipped )
+		{
+			priority				= _priority;
+			skipped_internal		= _skipped;
+		}
+		
 		protected abstract File
 		setSkippedInternal( boolean skipped );
 	}
@@ -386,6 +440,13 @@ DiskManagerUtil
 
 		        final DiskManagerFileInfoSet fileSetSkeleton = new DiskManagerFileInfoSet() {
 
+		        	@Override
+		        	public void load(int[] priorities, boolean[] skipped){
+		        		for ( int i=0;i<priorities.length;i++){
+		        			res[i].load(priorities[i],skipped[i]);
+		        		}
+		        	}
+		        	
 					@Override
 					public DiskManagerFileInfo[] getFiles() {
 						return res;
@@ -495,15 +556,13 @@ DiskManagerUtil
 							download_manager.getDownloadState().setFileLinks( from_indexes, from_links, to_links );
 						}
 
-						if(!setSkipped){
-							doFileExistenceChecks(this, toChange, download_manager, true);
-						}
-
 						for(int i=0;i<res.length;i++){
 							if(toChange[i]){
 								listener.filePriorityChanged(res[i]);
 							}
 						}
+
+						doFileExistenceChecksAfterSkipChange(this, toChange, setSkipped, download_manager );
 					}
 
 					@Override
@@ -520,8 +579,10 @@ DiskManagerUtil
 						try {
 							dmState.suppressStateSave(true);
 
-							for(int i=0;i<res.length;i++)
-							{
+							boolean	recalc_dl = false;
+							
+							for(int i=0;i<res.length;i++){
+							
 								if(!toChange[i])
 									continue;
 
@@ -628,11 +689,13 @@ DiskManagerUtil
 								setSkipped( toSkip, true );
 							}
 
-							for(int i=0;i<res.length;i++)
-							{
-								if(!toChange[i])
+							for(int i=0;i<res.length;i++){
+								
+								if(!toChange[i]){
+								
 									continue;
-
+								}
+								
 								// download's not running, update resume data as necessary
 
 								int cleared = RDResumeHandler.storageTypeChanged( download_manager, res[i] );
@@ -642,16 +705,22 @@ DiskManagerUtil
 								// storage type changes we don't have the problem of dealing with
 								// the last piece being smaller than torrent piece size
 
-								if (cleared > 0)
-								{
+								if ( cleared > 0 ){
+								
 									res[i].downloaded = res[i].downloaded - cleared * res[i].getTorrentFile().getTorrent().getPieceLength();
+									
 									if (res[i].downloaded < 0) res[i].downloaded = 0;
+									
+									recalc_dl = true;
 								}
+							}
+							
+							if ( recalc_dl ){
+								
+								download_manager.getStats().setDownloadCompletedBytes( -1 );	// force recalc
 							}
 
 							DiskManagerImpl.storeFileDownloaded( download_manager, res, true, false );
-
-							doFileExistenceChecks(this, toChange, download_manager, newStorageType == FileSkeleton.ST_LINEAR || newStorageType == FileSkeleton.ST_REORDER );
 
 						} finally {
 							dmState.suppressStateSave(false);
@@ -687,21 +756,21 @@ DiskManagerUtil
 
 		            	@Override
 			            public void
-		            	setSkipped(boolean _skipped)
+		            	setSkipped(boolean skipped)
 		            	{
-		            		if ( !_skipped && getStorageType() == ST_COMPACT ){
+		            		if ( !skipped && getStorageType() == ST_COMPACT ){
 		            			if ( !setStorageType( ST_LINEAR )){
 		            				return;
 		            			}
 		            		}
 
-		            		if ( !_skipped && getStorageType() == ST_REORDER_COMPACT ){
+		            		if ( !skipped && getStorageType() == ST_REORDER_COMPACT ){
 		            			if ( !setStorageType( ST_REORDER )){
 		            				return;
 		            			}
 		            		}
 
-		            		File to_link = setSkippedInternal( _skipped );
+		            		File to_link = setSkippedInternal( skipped );
 
 		            		DiskManagerImpl.storeFilePriorities( download_manager, res );
 
@@ -710,13 +779,13 @@ DiskManagerUtil
 		            			download_manager.getDownloadState().setFileLink( file_index, getFile( false ), to_link );
 		            		}
 
-		            		if ( !_skipped ){
-		            			boolean[] toCheck = new boolean[fileSetSkeleton.nbFiles()];
-		            			toCheck[file_index] = true;
-		            			doFileExistenceChecks(fileSetSkeleton, toCheck, download_manager, true);
-		            		}
-
 		            		listener.filePriorityChanged( this );
+
+	            			boolean[] toCheck = new boolean[fileSetSkeleton.nbFiles()];
+		            			
+	            			toCheck[file_index] = true;
+		            			
+	            			doFileExistenceChecksAfterSkipChange( fileSetSkeleton, toCheck, skipped, download_manager );
 		            	}
 
 		            	@Override
@@ -1496,8 +1565,8 @@ DiskManagerUtil
 
 	static void
 	loadFilePriorities(
-		DownloadManager         download_manager,
-		DiskManagerFileInfoSet   fileSet )
+		DownloadManager         	download_manager,
+		DiskManagerFileInfoSet   	fileSet )
 	{
 		//  TODO: remove this try/catch.  should only be needed for those upgrading from previous snapshot
 		try {
@@ -1528,10 +1597,9 @@ DiskManagerUtil
 				}
 			}
 
-			fileSet.setPriority(prio);
-			fileSet.setSkipped(toSkip, true);
-
+			fileSet.load( prio, toSkip );
 		}
+		
 		catch (Throwable t) {Debug.printStackTrace( t );}
 	}
 
@@ -1591,6 +1659,22 @@ DiskManagerUtil
 		DownloadManager		dm )
 	{
 		try{
+			TOTorrent torrent = dm.getTorrent();
+			
+			if ( torrent == null ){
+				
+				return( new DiskManagerPiece[0] );
+			}
+			
+	        DMPieceMapper piece_mapper    = DMPieceMapperFactory.create( torrent );
+
+	        int nbPieces    = torrent.getNumberOfPieces();
+	    	
+	        int pieceLength     = (int)torrent.getPieceLength();
+	        int lastPieceLength = piece_mapper.getLastPieceLength();
+	
+	        DiskManagerPiece[] pieces      = new DiskManagerPiece[nbPieces];
+
 			DiskManagerFileInfoSet file_set = 
 				getFileInfoSkeleton(
 					dm,
@@ -1608,17 +1692,8 @@ DiskManagerUtil
 						public void filePriorityChanged(DiskManagerFileInfo file){
 						}
 					});
-			
-			DiskManagerFileInfo[] files = file_set.getFiles();
-			
-			TOTorrent torrent = dm.getTorrent();
-			
-			if ( torrent == null ){
 				
-				return( new DiskManagerPiece[0] );
-			}
-			
-	        DMPieceMapper piece_mapper    = DMPieceMapperFactory.create( torrent );
+			DiskManagerFileInfo[] files = file_set.getFiles();
 	
 	        LocaleUtilDecoder   locale_decoder = LocaleTorrentUtil.getTorrentEncoding( torrent );
 	
@@ -1633,12 +1708,6 @@ DiskManagerUtil
 	        
 	        DMPieceMap piece_map = piece_mapper.getPieceMap();       
 	        	        	        
-	        int nbPieces    = torrent.getNumberOfPieces();
-	
-	        int pieceLength     = (int)torrent.getPieceLength();
-	        int lastPieceLength = piece_mapper.getLastPieceLength();
-	
-	        DiskManagerPiece[] pieces      = new DiskManagerPiece[nbPieces];
 	
 	        DiskManagerHelper disk_manager =
 	        	new DiskManagerHelper(){
@@ -1819,7 +1888,7 @@ DiskManagerUtil
 					}
 					
 					@Override
-					public File getMoveSubTask(){
+					public String getMoveSubTask(){
 						return null;
 					}
 					
@@ -2015,5 +2084,276 @@ DiskManagerUtil
 			
 			return( null );
 		}
-	}	
+	}
+	
+	private static List<CoreOperationTask>	move_tasks = new ArrayList<>();
+	  
+	public static void
+	runMoveTask(
+		DownloadManager		download_manager,
+		File				destination,
+		Runnable			target,
+		MoveTaskAapter		adapter )
+	
+		throws DownloadManagerException
+	{		
+		try{
+			DownloadManagerStats stats = download_manager.getStats();
+
+			if ( stats.getTotalDataBytesReceived() == 0 && stats.getPercentDoneExcludingDND() == 0 ){
+
+					// looks like it hasn't run yet
+
+				boolean found_file = false;
+
+				for ( DiskManagerFileInfo info: download_manager.getDiskManagerFileInfoSet().getFiles()){
+
+					if ( !info.getTorrentFile().isPadFile()){
+
+						if ( info.exists()){
+
+							found_file = true;
+							
+							break;
+						}
+					}
+				}
+
+				if ( !found_file ){
+
+						// going to run quickly, avoid queue and scheduling
+					
+					target.run();
+					
+					return;
+				}
+			}
+
+			FileUtil.runAsTask(
+				new CoreOperationTask()
+				{
+					private boolean		queued = true;
+
+					@Override
+					public String 
+					getName()
+					{
+						return( download_manager.getDisplayName());
+					}
+
+					@Override
+					public DownloadManager 
+					getDownload()
+					{
+						return( download_manager );
+					}
+
+					@Override
+					public String[] 
+					getAffectedFileSystems()
+					{
+						return( FileUtil.getFileStoreNames( download_manager.getAbsoluteSaveLocation(), destination ));
+					}
+
+					private ProgressCallback callback = 
+					new ProgressCallbackAdapter()
+					{
+						private volatile int	current_state = ProgressCallback.ST_NONE;
+
+						@Override
+						public int 
+						getProgress()
+						{
+							long[] mp = adapter.getMoveProgress();
+
+							return( mp==null?0:(int)mp[0]);
+						}
+
+						@Override
+						public long 
+						getSize()
+						{
+							long[] mp = adapter.getMoveProgress();
+
+							return( mp==null?download_manager.getStats().getSizeExcludingDND():mp[1] );
+						}
+
+						@Override
+						public String 
+						getSubTaskName()
+						{
+							return( adapter.getMoveSubTask());
+						}
+
+						@Override
+						public int 
+						getSupportedTaskStates()
+						{
+							return( 
+									ProgressCallback.ST_PAUSE |  
+									ProgressCallback.ST_RESUME |
+									ProgressCallback.ST_CANCEL |
+									ProgressCallback.ST_SUBTASKS );
+						}
+
+						@Override
+						public void 
+						setTaskState(
+								int state )
+						{
+							if ( current_state == ProgressCallback.ST_CANCEL ){
+
+								return;
+							}
+
+							if ( state == ProgressCallback.ST_PAUSE ){
+
+								adapter.setMoveState( ProgressListener.ST_PAUSED );
+
+								current_state = state;
+
+							}else if ( state == ProgressCallback.ST_RESUME ){
+
+								adapter.setMoveState( ProgressListener.ST_NORMAL );
+
+								current_state = ProgressCallback.ST_NONE;									
+
+							}else if ( state == ProgressCallback.ST_CANCEL ){
+
+								adapter.setMoveState( ProgressListener.ST_CANCELLED );
+
+								current_state = ProgressCallback.ST_CANCEL;									
+							}
+						}
+
+						public int
+						getTaskState()
+						{
+							if ( current_state == ProgressCallback.ST_NONE && queued ){
+
+								return( ProgressCallback.ST_QUEUED );
+							}
+
+							return( current_state );
+						}
+					};
+
+					@Override
+					public void
+					run(
+							CoreOperation operation)
+					{
+						boolean ready;
+
+						synchronized( move_tasks ){
+
+							move_tasks.add( this );
+
+							ready = move_tasks.size() == 1;
+						}
+
+						try{
+							if ( DiskManagerOperationScheduler.isEnabled()){
+
+								while( callback.getTaskState() == ProgressCallback.ST_PAUSE ){
+
+									try{
+										Thread.sleep( 500 );
+
+									}catch( Throwable e ){
+
+									}
+								}
+
+								if ( callback.getTaskState() == ProgressCallback.ST_CANCEL ){
+
+									throw( new RuntimeException( "Cancelled" ));
+								}
+
+							}else{
+
+								while( !ready ){
+
+									try{
+										Thread.sleep( 500 );
+
+									}catch( Throwable e ){
+
+									}
+
+									if ( callback.getTaskState() == ProgressCallback.ST_CANCEL ){
+
+										throw( new RuntimeException( "Cancelled" ));
+									}
+
+									synchronized( move_tasks ){
+
+										for ( CoreOperationTask task: move_tasks ){
+
+											int state = task.getProgressCallback().getTaskState();
+
+											if ( state != ProgressCallback.ST_PAUSE ){
+
+												if ( task == this ){
+
+													if ( state == ProgressCallback.ST_QUEUED ){
+
+														ready = true;
+													}
+												}
+
+												break;
+											}
+										}
+									}
+								}
+							}
+
+							queued = false;
+
+							target.run();
+
+						}finally{
+
+							synchronized( move_tasks ){
+
+								move_tasks.remove( this );
+							}
+						}
+					}
+
+					@Override
+					public ProgressCallback 
+					getProgressCallback()
+					{
+						return( callback );
+					}
+				});
+			
+		}catch( RuntimeException e ){
+
+			Throwable cause = e.getCause();
+
+			if ( cause instanceof DownloadManagerException ){
+
+				throw((DownloadManagerException)cause);
+			}
+
+			throw( e );
+		}
+	}
+
+	public interface
+	MoveTaskAapter
+	{
+		public long[]
+		getMoveProgress();
+		
+		public String
+		getMoveSubTask();
+		
+		public void
+		setMoveState(
+			int	state );
+	}
 }

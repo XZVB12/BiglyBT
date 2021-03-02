@@ -26,6 +26,7 @@ import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.download.impl.DownloadManagerStateImpl;
 import com.biglybt.core.torrent.TOTorrent;
 import com.biglybt.core.torrent.TOTorrentException;
+import com.biglybt.core.util.SystemTime;
 
 /**
  * @author parg
@@ -137,5 +138,53 @@ DownloadManagerStateFactory
 		String	name )
 	{
 		return( DownloadManagerStateImpl.getBooleanParameterDefault( name ));
+	}
+	
+	public static int[]
+	getCachedAggregateScrapeSeedsLeechers(
+		DownloadManagerState		state )
+	{
+		return( getCachedAggregateScrapeSeedsLeechers( state, 7*24*60 ));
+	}
+	
+	public static int[]
+	getCachedAggregateScrapeSeedsLeechers(
+		DownloadManagerState		state,
+		int							max_age_mins )
+	{
+		String cache = state.getAttribute( DownloadManagerState.AT_AGGREGATE_SCRAPE_CACHE );
+
+		int	[] result = null;
+
+		if ( cache != null ){
+
+			String[]	bits = cache.split(",");
+
+			if ( bits.length == 3 ){
+
+				try{
+					long 	updated_mins = Long.parseLong( bits[0] );
+
+					long	mins = SystemTime.getCurrentTime()/(1000*60);
+
+					long	age_mins = mins - updated_mins;
+
+					if ( age_mins <= max_age_mins || max_age_mins == Integer.MAX_VALUE ){
+
+						int seeds = Integer.parseInt( bits[1] );
+						int peers = Integer.parseInt( bits[2] );
+
+						if ( seeds >= 0 && peers >= 0 ){
+
+							result = new int[]{ seeds, peers };
+						}
+					}
+				}catch( Throwable e ){
+
+				}
+			}
+		}
+
+		return( result );
 	}
 }

@@ -83,7 +83,7 @@ import com.biglybt.platform.PlatformManagerFactory;
 public class
 DiskManagerImpl
     extends LogRelation
-    implements DiskManagerHelper
+    implements DiskManagerHelper, DiskManagerUtil.MoveTaskAapter
 {
 	private static final int DM_FREE_PIECELIST_TIMEOUT	= 120*1000;
 
@@ -238,6 +238,8 @@ DiskManagerImpl
     private long		allocate_not_required;
     private long        remaining;
 
+    private volatile String	allocation_task;
+    
     	// this used to drive end-of-download detection, careful that it is accurate at all times (there was a bug where it wasn't and caused downloads to prematurely recheck...)
     
     private volatile long	remaining_excluding_dnd;
@@ -1052,12 +1054,11 @@ DiskManagerImpl
     {
     	int[] fail_result = { -1, -1, -1 };
 
-        Set file_set    = new HashSet();
+        Set<String> file_set    = new HashSet<>();
 
         DMPieceMapperFile[] pm_files = piece_mapper.getFiles();
 
-        DiskManagerFileInfoImpl[] allocated_files = new DiskManagerFileInfoImpl[pm_files.length];
-
+        
         DownloadManagerState	state = download_manager.getDownloadState();
 
         long alloc_strategy = state.getLongAttribute( DownloadManagerState.AT_FILE_ALLOC_STRATEGY );
@@ -1066,9 +1067,15 @@ DiskManagerImpl
 
         boolean	alloc_ok = false;
         
-        try{
-            allocation_scheduler.register( this );
+        DiskManagerFileInfoImpl[] allocated_files = new DiskManagerFileInfoImpl[pm_files.length];
 
+        DiskManagerAllocationScheduler.AllocationInstance allocation_instance = null;
+             
+        	// alloc_requests are expected to need allocating so don't treat them as unexpected
+        
+		Map alloc_requests = state.getMapAttribute( DownloadManagerState.AT_FILE_ALLOC_REQUEST );
+		
+        try{
             setState( ALLOCATING );
 
             allocated 				= 0;
@@ -1089,6 +1096,44 @@ DiskManagerImpl
 
 			String incomplete_suffix = state.getAttribute( DownloadManagerState.AT_INCOMP_FILE_SUFFIX );
 
+			for ( int i=0;i<pm_files.length;i++ ){
+
+				if ( stopping ){
+
+					setErrorState( "File allocation interrupted - download is stopping" );
+
+					return( fail_result );
+				}
+
+				DMPieceMapperFile pm_info = pm_files[i];
+
+				String relative_data_file = pm_info.getRelativeDataPath();
+
+				allocation_task = relative_data_file;
+
+				DiskManagerFileInfoImpl fileInfo;
+
+				try{
+					int storage_type = DiskManagerUtil.convertDMStorageTypeFromString( storage_types[i]);
+
+					fileInfo = createFileInfo( state, pm_info, i, root_dir, relative_data_file, storage_type );
+
+					allocated_files[i] = fileInfo;
+
+					pm_info.setFileInfo( fileInfo );
+
+				}catch ( Exception e ){
+
+					setErrorState( Debug.getNestedExceptionMessage(e) + " (allocateFiles:" + relative_data_file.toString() + ")" );
+
+					return( fail_result );
+				}
+			}
+
+			DiskManagerFileInfoSetImpl allocated_fileset = new DiskManagerFileInfoSetImpl( allocated_files ,this );
+
+			DiskManagerUtil.loadFilePriorities( download_manager, allocated_fileset );		
+			
             for ( int i=0;i<pm_files.length;i++ ){
 
             	if ( stopping ){
@@ -1104,23 +1149,9 @@ DiskManagerImpl
 
                 String relative_data_file = pm_info.getRelativeDataPath();
 
-                DiskManagerFileInfoImpl fileInfo;
+                allocation_task = relative_data_file;
 
-                try{
-                    int storage_type = DiskManagerUtil.convertDMStorageTypeFromString( storage_types[i]);
-
-                    fileInfo = createFileInfo( state, pm_info, i, root_dir, relative_data_file, storage_type );
-
-                    allocated_files[i] = fileInfo;
-
-                    pm_info.setFileInfo( fileInfo );
-
-                }catch ( Exception e ){
-
-                    setErrorState( Debug.getNestedExceptionMessage(e) + " (allocateFiles:" + relative_data_file.toString() + ")" );
-
-                    return( fail_result );
-                }
+                DiskManagerFileInfoImpl fileInfo = allocated_files[i];
 
                 if ( fileInfo.getTorrentFile().isPadFile()){
                 	
@@ -1133,7 +1164,7 @@ DiskManagerImpl
                 
                 CacheFile   cache_file      = fileInfo.getCacheFile();
                 File        data_file       = fileInfo.getFile(true);
-
+                
                 String  file_key = data_file.getAbsolutePath();
 
                 if ( Constants.isWindows ){
@@ -1195,7 +1226,7 @@ DiskManagerImpl
 
                 boolean compact = st == CacheFile.CT_COMPACT || st == CacheFile.CT_PIECE_REORDER_COMPACT;
 
-                boolean mustExistOrAllocate = ( !compact ) || RDResumeHandler.fileMustExist(download_manager, fileInfo);
+                boolean mustExistOrAllocate = ( !compact ) || RDResumeHandler.fileMustExist(download_manager, allocated_fileset, fileInfo);
 
                 if ( skip_file_checks ){
                 	
@@ -1252,7 +1283,12 @@ DiskManagerImpl
 	                        		
 		                        		// file is too small
 	
-		                         	if ( !allocateFile( fileInfo, data_file, existing_length, target_length, stop_after_start, alloc_strategy )){
+	                        		if ( allocation_instance == null ){
+	                        			
+	                        			allocation_instance = allocation_scheduler.register( this );
+	                        		}
+	                        		
+		                         	if ( !allocateFile( allocation_instance, fileInfo, data_file, existing_length, target_length, stop_after_start, alloc_strategy )){
 	
 		                      			// aborted
 	
@@ -1293,8 +1329,12 @@ DiskManagerImpl
 	
 	
 	                    try{
+                    		if ( allocation_instance == null ){
+                    			
+                    			allocation_instance = allocation_scheduler.register( this );
+                    		}
 	
-	                    	if ( !allocateFile( fileInfo, data_file, -1, target_length, stop_after_start, alloc_strategy )){
+	                    	if ( !allocateFile( allocation_instance, fileInfo, data_file, -1, target_length, stop_after_start, alloc_strategy )){
 	
 	                      			// aborted
 	
@@ -1310,7 +1350,10 @@ DiskManagerImpl
 	                        return( fail_result );
 	                    }
 	
-	                    numNewFiles++;
+	                    if ( alloc_requests == null || !alloc_requests.containsKey( String.valueOf( i ))){
+	                    
+	                    	numNewFiles++;
+	                    }
 	
 	                }else{
 	
@@ -1325,9 +1368,7 @@ DiskManagerImpl
                 // entries have been populated
 
             files   = allocated_files;
-            fileset = new DiskManagerFileInfoSetImpl(files,this);
-
-            loadFilePriorities();
+            fileset = allocated_fileset;
 
             download_manager.setDataAlreadyAllocated( true );
 
@@ -1337,8 +1378,18 @@ DiskManagerImpl
 
         }finally{
 
-            allocation_scheduler.unregister( this );
+        	if ( allocation_instance != null ){
+            
+        		allocation_instance.unregister();
+        	}
 
+            allocation_task = null;
+            
+            if ( alloc_requests != null ){
+            	
+        		state.setMapAttribute( DownloadManagerState.AT_FILE_ALLOC_REQUEST, null );
+            }
+            
             if ( alloc_ok ){
             
             	if ( allocated + allocate_not_required != totalLength ){
@@ -1368,12 +1419,13 @@ DiskManagerImpl
 
     private boolean
     allocateFile(
-    	DiskManagerFileInfoImpl		fileInfo,
-    	File						data_file,
-    	long						existing_length,	// -1 if not exists
-    	long						target_length,
-    	boolean[]					stop_after_start,
-    	long						alloc_strategy )
+    	DiskManagerAllocationScheduler.AllocationInstance	allocation_instance,
+    	DiskManagerFileInfoImpl								fileInfo,
+    	File												data_file,
+    	long												existing_length,	// -1 if not exists
+    	long												target_length,
+    	boolean[]											stop_after_start,
+    	long												alloc_strategy )
 
     	throws Throwable
     {
@@ -1381,16 +1433,18 @@ DiskManagerImpl
     	
         while( started && !stopping ){
 
-            if ( allocation_scheduler.getPermission( this )){
+            if ( allocation_instance.getPermission()){
 
                 break;
             }
         }
 
-        if ( !started ){
+        if ( stopping || !started ){
 
                 // allocation interrupted
 
+        	setErrorState( "File allocation interrupted - download is stopping" );
+        	
             return( false );
         }
 
@@ -1482,10 +1536,10 @@ DiskManagerImpl
 	        				start_from = existing_length;
 	        			}
 	        		}
-	        		
-	        			
+	        		        			
 	        		successfulAlloc = 
 	        			writer.zeroFile( 
+	        				allocation_instance,
 	        				fileInfo, 
 	        				start_from, 
 	        				target_length,
@@ -1601,6 +1655,20 @@ DiskManagerImpl
         return((int) (((allocated+allocate_not_required) * 1000) / totalLength ));
     }
 
+    @Override
+    public long[]
+    getLatency()
+    {
+    	return( new long[]{ reader.getLatency(), writer.getLatency() });
+    }
+    
+    @Override
+    public String 
+    getAllocationTask()
+    {
+    	return( allocation_task );
+    }
+    
     @Override
     public long
     getRemaining() {
@@ -2372,15 +2440,20 @@ DiskManagerImpl
     }
 
     @Override
-    public File 
+    public String 
     getMoveSubTask()
     {
     	if ( move_in_progress ){
 
-    		return( move_subtask );
+    		File f = move_subtask;
+    		
+    		if ( f != null ){
+    			
+    			return( f.getName());
+    		}
     	}
 
-    	return( null );
+    	return( "" );
     }
     
     @Override
@@ -2579,7 +2652,7 @@ DiskManagerImpl
         			perform(
         				SaveLocationChange move_details )
         			{
-        				moveFiles( move_details, true, op_status );
+        				moveDownloadFilesWhenEndedOrRemoved0( move_details, op_status );
         			}
         		});
 
@@ -2588,7 +2661,7 @@ DiskManagerImpl
 
         if ( move_details != null ){
 
-        	moveFiles( move_details, true, op_status );
+        	moveDownloadFilesWhenEndedOrRemoved0( move_details, op_status );
         }
 
         return true;
@@ -2607,6 +2680,31 @@ DiskManagerImpl
           }
 
       }
+    }
+    
+    private void
+    moveDownloadFilesWhenEndedOrRemoved0(
+   		SaveLocationChange 	loc_change,
+       	OperationStatus		op_status )	
+    {
+    	Runnable target = ()->{
+    		moveFiles( loc_change, true, op_status );
+    	};
+    	
+    	File destination = loc_change.download_location;
+    	
+    	if ( destination == null ){
+    	
+    		destination = download_manager.getAbsoluteSaveLocation();
+    	}
+    	
+    	try{
+    		DiskManagerUtil.runMoveTask( download_manager, destination, target, this );
+    		
+    	}catch( Throwable e ){
+    		
+    		Debug.out( e );
+    	}
     }
 
     @Override
@@ -2769,7 +2867,13 @@ DiskManagerImpl
 					  });
 		  }
 	
-		  String log_str = "Move \"" + download_manager.getDisplayName() + "\" from  " + current_save_location + " to " + move_to_dir;
+		  String log_str = "Move active \"" + download_manager.getDisplayName() + "\" from  " + current_save_location + " to " + move_to_dir;
+		  
+		  int	files_accepted 		= 0;
+		  int	files_skipped		= 0;
+		  int	files_done			= 0;
+		  long	total_size_bytes	= 0;
+		  long	total_done_bytes	= 0;
 		  
 		  try{
 			  FileUtil.log( log_str + " starts" );
@@ -2794,9 +2898,7 @@ DiskManagerImpl
 	
 			  File[]    old_files   = new File[files.length];
 			  boolean[] link_only   = new boolean[files.length];
-	
-			  long	total_bytes 		= 0;
-	
+		
 			  final long[]	file_lengths_to_move	 	= new long[files.length];
 	
 			  for (int i=0; i < files.length; i++) {
@@ -2816,7 +2918,9 @@ DiskManagerImpl
 							  old_file  = linked_file;
 	
 						  }else{
-	
+							  
+							  FileUtil.log( "File linkage prohibits move: " + linked_file.getCanonicalPath() + " / " + save_location.getCanonicalPath());
+							  
 							  link_only[i] = true;
 						  }
 	
@@ -2830,6 +2934,8 @@ DiskManagerImpl
 	
 						  }else{
 	
+							  FileUtil.log( "File linkage prohibits move: " + linked_file.getCanonicalPath() + " / " + save_location.getCanonicalPath());
+
 							  link_only[i] = true;
 						  }
 					  }
@@ -2864,34 +2970,27 @@ DiskManagerImpl
 				   * the relative path.
 				   */
 	
-				  String old_parent_path = old_file.getCanonicalFile().getParent();
+					File old_parent = old_file.getParentFile();
 	
-				  String sub_path;
 	
 				  /**
 				   * Calculate the sub path of where the file lives compared to the new save location.
-				   *
-				   * The code here has changed from what it used to be to fix bug 1636342:
-				   *   https://sourceforge.net/tracker/?func=detail&atid=575154&aid=1636342&group_id=84122
 				   */
-	
-				  if ( old_parent_path.startsWith(move_from_dir.getPath())){
-	
-					  sub_path = old_parent_path.substring(move_from_dir.getPath().length());
-	
-				  }else{
-	
-					  logMoveFileError(move_to_dir, "Could not determine relative path for file - " + old_parent_path);
-	
-					  throw new IOException("relative path assertion failed: move_from_dir=\"" + move_from_dir + "\", old_parent_path=\"" + old_parent_path + "\"");
+
+					String sub_path = FileUtil.getRelativePath(move_from_dir, old_parent);
+
+					if ( sub_path == null ){
+
+						logMoveFileError(move_to_dir,
+								"Could not determine relative path for file - " + old_parent);
+
+						throw new IOException(
+								"relative path assertion failed: move_from_dir=\""
+										+ move_from_dir + "\", old_parent_path=\"" + old_parent
+										+ "\"");
 				  }
 	
 				  //create the destination dir
-	
-				  if ( sub_path.startsWith( File.separator )){
-	
-					  sub_path = sub_path.substring(1);
-				  }
 	
 				  // We may be doing a rename, and if this is a simple torrent, we have to keep the names in sync.
 	
@@ -2926,7 +3025,7 @@ DiskManagerImpl
 							  boolean assert_expected_old_name = expected_old_name.equals(save_location.getName());
 							  if (!assert_expected_old_name) {
 								  Debug.out("Assertion check for renaming file in multi-name torrent " + (assert_expected_old_name ? "passed" : "failed") + "\n" +
-										  "  Old parent path: " + old_parent_path + "\n" +
+										  "  Old parent path: " + old_parent + "\n" +
 										  "  Subpath: " + sub_path + "\n" +
 										  "  Sub-subpath: " + sub_sub_path + "\n" +
 										  "  Expected old name: " + expected_old_name + "\n" +
@@ -2949,9 +3048,15 @@ DiskManagerImpl
 	
 				  new_files[i]  = new_file;
 	
-				  if ( !link_only[i] ){
+				  if ( link_only[i] ){
+					  
+					  files_skipped++;
+					  
+				  }else{
 	
-					  total_bytes += file_lengths_to_move[i] = old_file.length();
+					  files_accepted++;
+					  
+					  total_size_bytes += file_lengths_to_move[i] = old_file.length();
 	
 					  if ( new_file.exists()){
 	
@@ -2986,20 +3091,16 @@ DiskManagerImpl
 			  }
 	
 			  final String average_config_key	= _average_config_key;
-	
-			  // lazy here for rare case where all non-zero length files are links
-	
-			  if ( total_bytes == 0 ){
-	
-				  total_bytes = 1;
-			  }
-	
+				  
+			  	// lazy here for rare case where all non-zero length files are links
+
+			  long stats_total_bytes = total_size_bytes==0?1:total_size_bytes;
+		
 			  long	done_bytes = 0;
 	
 			  final Object	progress_lock = new Object();
 			  final int[] 	current_file_index 	= { 0 };
 			  final long[]	current_file_bs		= { 0 };
-			  final long		f_total_bytes		= total_bytes;
 	
 			  final long[]	last_progress_bytes		= { 0 };
 			  final long[]	last_progress_update 	= { SystemTime.getMonotonousTime() };
@@ -3124,7 +3225,7 @@ DiskManagerImpl
 
 									  long	pretend_bytes_moved = bytes_moved + pretend_bytes;
 
-									  move_progress = new long[]{ (int)( 1000*pretend_bytes_moved/f_total_bytes), f_total_bytes };
+									  move_progress = new long[]{ (int)( 1000*pretend_bytes_moved/stats_total_bytes), stats_total_bytes };
 
 									  // System.out.println( "pretend prog: " + move_progress );
 								  }
@@ -3178,7 +3279,7 @@ DiskManagerImpl
 
 									  long	done_bytes = current_file_bs[0] + file_length;
 
-									  move_progress = new long[]{ (int)( 1000*done_bytes/f_total_bytes), f_total_bytes };
+									  move_progress = new long[]{ (int)( 1000*done_bytes/stats_total_bytes), stats_total_bytes };
 
 									  last_progress_bytes[0]	= done_bytes;
 									  last_progress_update[0]	= SystemTime.getMonotonousTime();
@@ -3243,6 +3344,10 @@ DiskManagerImpl
 	
 						  files[i].moveFile( new_root_dir, new_file, link_only[i], pl );
 	
+						  files_done++;
+						  
+						  total_done_bytes += file_lengths_to_move[i];
+						  
 						  synchronized( progress_lock ){
 	
 							  current_file_index[0] = i+1;
@@ -3251,7 +3356,7 @@ DiskManagerImpl
 	
 							  current_file_bs[0] = done_bytes;
 	
-							  move_progress = new long[]{ (int)( 1000*done_bytes/total_bytes), total_bytes };
+							  move_progress = new long[]{ (int)( 1000*done_bytes/stats_total_bytes), stats_total_bytes };
 	
 							  last_progress_bytes[0]	= done_bytes;
 							  last_progress_update[0]	= SystemTime.getMonotonousTime();
@@ -3291,7 +3396,7 @@ DiskManagerImpl
 						  for (int j=0;j<i;j++){
 	
 							  move_subtask		=  old_files[j];
-							  move_progress 	= new long[]{ (int)( 1000*bytes_moved/total_bytes), total_bytes };
+							  move_progress 	= new long[]{ (int)( 1000*bytes_moved/stats_total_bytes), stats_total_bytes };
 								
   						  	  long bytes_this_file =  file_lengths_to_move[j];
 
@@ -3328,7 +3433,7 @@ DiskManagerImpl
 	  						  				  total_done = bytes_this_file;
 	  						  			  }
 	
-	  						  			  move_progress = new long[]{ (int)( 1000*(bytes_moved_at_start-total_done)/f_total_bytes), f_total_bytes }; 
+	  						  			  move_progress = new long[]{ (int)( 1000*(bytes_moved_at_start-total_done)/stats_total_bytes), stats_total_bytes }; 
 	  						  		  }
 	  						  	  };
 							  
@@ -3364,9 +3469,9 @@ DiskManagerImpl
 	
 			  long	elapsed_secs = ( SystemTime.getMonotonousTime() - start )/1000;
 	
-			  if ( total_bytes > 10*1024*1024 && elapsed_secs > 10 ){
+			  if ( total_size_bytes > 10*1024*1024 && elapsed_secs > 10 ){
 	
-				  long	bps = total_bytes / elapsed_secs;
+				  long	bps = total_size_bytes / elapsed_secs;
 	
 				  if ( average_config_key != null ){
 	
@@ -3404,7 +3509,11 @@ DiskManagerImpl
 				  got_there[0] = true;
 			  }
 			  
-			  FileUtil.log( log_str + " ends" );
+			  FileUtil.log( 
+						 log_str + 
+						 	" ends (files accepted=" + files_accepted + 
+						 	", skipped=" + files_skipped + ", done=" + files_done +
+						 	"; bytes total=" + total_size_bytes + ", done=" + total_done_bytes + ")");
 		  }
 	  }
 
@@ -3778,12 +3887,6 @@ DiskManagerImpl
         }
         listeners.dispatch(LDT_PRIOCHANGED, file);
     }
-
-  private void
-  loadFilePriorities()
-  {
-      DiskManagerUtil.loadFilePriorities( download_manager, fileset );
-  }
 
   protected void
   storeFilePriorities()

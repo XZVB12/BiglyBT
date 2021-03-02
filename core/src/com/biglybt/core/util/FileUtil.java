@@ -19,6 +19,8 @@
 
 package com.biglybt.core.util;
 
+import static com.biglybt.core.config.ConfigKeys.File.BCFG_FILE_MOVE_ORIGIN_DELETE_FAIL_IS_WARNING;
+
 import java.io.*;
 import java.lang.reflect.Method;
 import java.net.MalformedURLException;
@@ -43,7 +45,9 @@ import com.biglybt.core.CoreOperation;
 import com.biglybt.core.CoreOperationTask;
 import com.biglybt.core.config.COConfigurationListener;
 import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.config.ConfigKeys;
 import com.biglybt.core.diskmanager.file.impl.FMFileAccess.FileAccessor;
+import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
@@ -65,25 +69,67 @@ public class FileUtil {
   private static final List		reserved_file_handles 	= new ArrayList();
   private static final AEMonitor	class_mon				= new AEMonitor( "FileUtil:class" );
 
-  private static Method reflectOnUsableSpace;
+  private static final Method reflectOnUsableSpace;
 
+  	// FileStore is minSDK 26 on Android
+  
+  private static final Method 	mPath_getFileStore;
+  private static final Method 	mToPath;
+
+	
   private static char[]	char_conversion_mapping = null;
 
   private static final FileHandler fileHandling;
 
   private static AEDiagnosticsLogger file_logger;
   
+  private static final ThreadLocal<IdentityHashSet<CoreOperationTask>>		tls	=
+	new ThreadLocal<IdentityHashSet<CoreOperationTask>>()
+	{
+	  @Override
+	  public IdentityHashSet<CoreOperationTask>
+	  initialValue()
+	  {
+		  return( new IdentityHashSet<CoreOperationTask>());
+	  }
+	};
+
   static {
 
-	  try
-	  {
-		  reflectOnUsableSpace = File.class.getMethod("getUsableSpace", (Class[])null);
-	  } catch (Throwable e)
-	  {
-		  reflectOnUsableSpace = null;
+	  Method _reflectOnUsableSpace;
+	
+	  try{
+		  _reflectOnUsableSpace = File.class.getMethod("getUsableSpace", (Class[])null);
+		  
+	  }catch (Throwable e){
+		  
+		  _reflectOnUsableSpace = null;
 	  }
 
-		String fileHandlingCN = System.getProperty("az.FileHandling.impl",
+	  reflectOnUsableSpace = _reflectOnUsableSpace;
+	  
+	  
+	  Method 	_mPath_getFileStore;
+	  Method 	_mToPath;
+
+	  try{
+		  Class  _claPath = Class.forName("java.nio.file.Path");
+		  Class  _claFiles = Class.forName("java.nio.file.Files");
+		  _mPath_getFileStore = _claFiles.getMethod("getFileStore", _claPath);
+		  _mToPath = File.class.getMethod("toPath");
+		  
+	  }catch( Throwable e ){
+		  
+		  _mPath_getFileStore	= null;
+		  _mToPath				= null;
+	  }
+	 
+	  mPath_getFileStore	= _mPath_getFileStore;
+	  mToPath				= _mToPath;
+
+	  
+	  
+	  String fileHandlingCN = System.getProperty("az.FileHandling.impl",
 			"");
 	  // To test:
 	  // fileHandlingCN = FileHandlerHack.class.getName();
@@ -1883,73 +1929,78 @@ public class FileUtil {
 
     			// recover by moving files back
 
-      		for (int i=0;i<last_ok;i++){
-
-				File	ff = files[i];
-				File	tf = newFile( to_file, ff.getName());
-
-    			try{
-    				// null - We don't want to use the file filter, it only refers to source paths.
-    				
-                    if ( !renameFile( 
-                    		tf, 
-                    		ff, 
-                    		false, 
-                    		null, 
-                    		new ProgressListener()
-                    		{
-                    			public void
-                    			setTotalSize(
-                    				long	size )
-                    			{
-                    			}
-                    			
-                    			@Override
-                    			public void 
-                    			setCurrentFile(File file)
-                    			{
-                    				if ( pl != null ){
-                    					try{
-                    						pl.setCurrentFile( file );
-                    					}catch( Throwable e ){
-                    						Debug.out( e );
-                    					}
-                    				}
-                    			}
-                    			public void
-                    			bytesDone(
-                    				long	num )
-                    			{
-                    				if ( pl != null ){
-                    					try{
-                    						pl.bytesDone( -num );
-                    					}catch( Throwable e ){
-                    						Debug.out( e );
-                    					}
-                    				}
-                    			}
-                    			
-                    			public int
-                    			getState()
-                    			{
-                    				return( ST_NORMAL );
-                    			}
-                    			
-                    			public void
-                    			complete()
-                    			{
-                    				
-                    			}
-                    		}))
-                    {
-    					Debug.out( "renameFile: recovery - failed to move file '" + tf.toString()
-										+ "' to '" + ff.toString() + "'" );
-    				}
-    			}catch( Throwable e ){
-    				Debug.out("renameFile: recovery - failed to move file '" + tf.toString()
-									+ "' to '" + ff.toString() + "'", e);
-
-    			}
+    		if ( last_ok > 0 ){
+    			
+    			log( "Rename cancelled/failed, returning " + last_ok + " files to " + from_file.getAbsolutePath() + " from " + to_file.getAbsolutePath());
+    		
+	      		for (int i=0;i<last_ok;i++){
+	
+					File	ff = files[i];
+					File	tf = newFile( to_file, ff.getName());
+	
+	    			try{
+	    				// null - We don't want to use the file filter, it only refers to source paths.
+	    				
+	                    if ( !renameFile( 
+	                    		tf, 
+	                    		ff, 
+	                    		false, 
+	                    		null, 
+	                    		new ProgressListener()
+	                    		{
+	                    			public void
+	                    			setTotalSize(
+	                    				long	size )
+	                    			{
+	                    			}
+	                    			
+	                    			@Override
+	                    			public void 
+	                    			setCurrentFile(File file)
+	                    			{
+	                    				if ( pl != null ){
+	                    					try{
+	                    						pl.setCurrentFile( file );
+	                    					}catch( Throwable e ){
+	                    						Debug.out( e );
+	                    					}
+	                    				}
+	                    			}
+	                    			public void
+	                    			bytesDone(
+	                    				long	num )
+	                    			{
+	                    				if ( pl != null ){
+	                    					try{
+	                    						pl.bytesDone( -num );
+	                    					}catch( Throwable e ){
+	                    						Debug.out( e );
+	                    					}
+	                    				}
+	                    			}
+	                    			
+	                    			public int
+	                    			getState()
+	                    			{
+	                    				return( ST_NORMAL );
+	                    			}
+	                    			
+	                    			public void
+	                    			complete()
+	                    			{
+	                    				
+	                    			}
+	                    		})){
+	                    
+	    					Debug.out( "renameFile: recovery - failed to move file '" + tf.toString()
+											+ "' to '" + ff.toString() + "'" );
+	    				}
+	    			}catch( Throwable e ){
+	    				Debug.out("renameFile: recovery - failed to move file '" + tf.toString()
+										+ "' to '" + ff.toString() + "'", e);
+	
+	    			}
+	      		}
       		}
 
       		return( false );
@@ -1958,31 +2009,28 @@ public class FileUtil {
 
     		boolean	same_drive = false;
     		
-			try{
-				/* FileStore is minSDK 26 on Android
-				FileStore fs1 = Files.getFileStore( from_file.toPath());
-				FileStore fs2 = Files.getFileStore( to_file_parent.toPath());
-				*/
-
-				Class claPath = Class.forName("java.nio.file.Path");
-				Class claFiles = Class.forName("java.nio.file.Files");
-				Method mPath_getFileStore = claFiles.getMethod("getFileStore", claPath);
-
-				Method mToPath = from_file.getClass().getMethod("toPath");
-				/* Path */ Object from_file_toPath = mToPath.invoke(from_file);
-				/* Path */ Object to_file_parent_toPath = mToPath.invoke(to_file_parent);
-
-				/* FileStore */ Object fs1 = mPath_getFileStore.invoke(null, from_file_toPath);
-				/* FileStore */ Object fs2 = mPath_getFileStore.invoke(null, to_file_parent_toPath);
-
-   				if ( fs1.equals( fs2 )){
-
-   					same_drive = true;
-   				}
-			}catch( Throwable e ){
-			}
+	    	if ( mToPath != null && mPath_getFileStore != null ){
+				try{
+					/* FileStore is minSDK 26 on Android
+					FileStore fs1 = Files.getFileStore( from_file.toPath());
+					FileStore fs2 = Files.getFileStore( to_file_parent.toPath());
+					*/
+	
+					/* Path */ Object from_file_toPath = mToPath.invoke(from_file);
+					/* Path */ Object to_file_parent_toPath = mToPath.invoke(to_file_parent);
+	
+					/* FileStore */ Object fs1 = mPath_getFileStore.invoke(null, from_file_toPath);
+					/* FileStore */ Object fs2 = mPath_getFileStore.invoke(null, to_file_parent_toPath);
+	
+	   				if ( fs1.equals( fs2 )){
+	
+	   					same_drive = true;
+	   				}
+				}catch( Throwable e ){
+				}
+	    	}
 			
-    		boolean	use_copy = COConfigurationManager.getBooleanParameter("Copy And Delete Data Rather Than Move");
+	    	boolean	use_copy = COConfigurationManager.getBooleanParameter("Copy And Delete Data Rather Than Move");
 
     		if ( use_copy ){
 
@@ -2046,6 +2094,67 @@ public class FileUtil {
     	}
     }
 
+    public static Object
+    getFileStore(
+    	File		file )
+    {
+    	if ( mToPath != null && mPath_getFileStore != null ){
+    		
+    			// file has to exist to have a filestore so walk up the tree if necessary
+    		
+    		File temp = file;
+    		
+    		while( temp != null ){
+    			
+				try{
+					/* FileStore is minSDK 26 on Android
+					*/
+	
+					/* Path */ Object path = mToPath.invoke( temp );
+	
+					/* FileStore */ Object fs = mPath_getFileStore.invoke(null, path);
+					
+					return( fs );
+					
+				}catch( Throwable e ){
+				}
+				
+				temp = temp.getParentFile();
+    		}
+    	}
+    	
+    	return( null );
+    }
+    
+    public static String[]
+    getFileStoreNames(
+    	File...	files )
+    {
+    	if ( files == null ){
+    		
+    		return( new String[0] );
+    	}
+    	
+    	List<String>	result = new ArrayList<>( files.length );
+    	
+    	for ( File f: files ){
+    		
+    		if ( f == null ){
+    			
+    			continue;
+    		}
+    		
+    		Object fs = getFileStore( f );
+    		
+    		if ( fs != null ){
+    			
+    			result.add( String.valueOf( fs ));
+    		}
+    	}
+    	   
+    	return( result.toArray( new String[ result.size()] ));
+    }
+    		
     private static boolean
     reallyCopyFile(
     	File				from_file,
@@ -2154,11 +2263,56 @@ public class FileUtil {
 
     		to_os = null;
 
-    		if ( !from_file.delete()){
-    			Debug.out( "renameFile: failed to delete '"
-    					+ from_file.toString() + "'" );
-
-    			throw( new Exception( "Failed to delete '" + from_file.toString() + "'"));
+    			// sometimes the file can be locked (by AV?)
+    		
+    		long del_retry_start = 0;
+    		
+    		while( true ){
+    			
+	    		if ( from_file.delete()){
+	    			
+	    			break;
+	    		}
+	    		
+	    		long now = SystemTime.getMonotonousTime();
+	    		
+	    		if ( del_retry_start == 0 ){
+	    			
+	    			del_retry_start = now;
+	    			
+	    		}else if ( now - del_retry_start < 10*1000 ){
+	    			
+	    			try{
+	    				
+	    				Thread.sleep( 250 );
+	    				
+	    			}catch( Throwable e ){
+	    				
+	    			}
+	    		}else{
+	    			
+	    			
+	    			if ( COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_FILE_MOVE_ORIGIN_DELETE_FAIL_IS_WARNING )){
+	    				
+	    				log( "Warning: failed to delete " + from_file.getAbsolutePath() + " after moving via copy" );
+	    				
+	    				break;
+	    			}
+	    			
+	    			Debug.out( "renameFile: failed to delete '" + from_file.toString() + "'" );
+	
+	    			throw( new Exception( "Failed to delete '" + from_file.toString() + "'"));
+	    		}
+	    		
+	    		if ( pl != null ){
+	    		
+	    			int state =  pl.getState();
+	    			
+	    			if ( state == ProgressListener.ST_CANCELLED ){
+						
+						throw( new IOException( "Cancelled" ));
+	    			}
+	    		}
     		}
 
     		success	= true;
@@ -2570,6 +2724,36 @@ public class FileUtil {
 		return new_root + File.separator + file_suffix;
 	}
 
+	public static boolean
+	hasTask(
+		DownloadManager	dm )
+	{
+		Core core = CoreFactory.getSingleton();
+
+		List<CoreOperation> ops = core.getOperations();
+
+		for ( CoreOperation op: ops ){
+
+			if ( op.getOperationType() == CoreOperation.OP_FILE_MOVE ){
+
+				CoreOperationTask task = op.getTask();
+				
+				if ( task != null && dm == task.getDownload()){
+
+						// allow recursive task creation for the same download - this happens
+						// when doing a quick-rename of a single file torrent's file from FilesView...
+					
+					if ( !tls.get().contains( task ) ){
+						
+						return( true );
+					}
+				}
+			}
+		}
+
+		return( false );
+	}
+	
 	public static void
 	runAsTask(
 		CoreOperationTask task )
@@ -2582,9 +2766,17 @@ public class FileUtil {
 		int					op_type,
 		CoreOperationTask 	task )
 	{
-		Core core = CoreFactory.getSingleton();
-
-		core.executeOperation( op_type, task );
+		try{
+			tls.get().add( task );
+		
+			Core core = CoreFactory.getSingleton();
+	
+			core.executeOperation( op_type, task );
+			
+		}finally{
+			
+			tls.get().remove( task );
+		}
 	}
 		
 	
@@ -3075,6 +3267,7 @@ public class FileUtil {
 		file_logger.log( str );
 		
 		if ( error != null ){
+			
 			file_logger.log(error );
 		}
 	}

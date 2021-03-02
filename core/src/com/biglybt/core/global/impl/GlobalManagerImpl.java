@@ -64,6 +64,8 @@ import com.biglybt.core.tag.impl.TagDownloadWithState;
 import com.biglybt.core.tag.impl.TagTypeWithState;
 import com.biglybt.core.torrent.TOTorrent;
 import com.biglybt.core.torrent.TOTorrentException;
+import com.biglybt.core.tracker.AllTrackersManager;
+import com.biglybt.core.tracker.AllTrackersManager.AllTrackers;
 import com.biglybt.core.tracker.client.*;
 import com.biglybt.core.tracker.util.TRTrackerUtils;
 import com.biglybt.core.tracker.util.TRTrackerUtilsListener;
@@ -253,7 +255,8 @@ public class GlobalManagerImpl
 	private final Map<HashWrapper,Map>			saved_download_manager_state	= new HashMap<>();
 	private final Map<HashWrapper,Boolean> 		paused_list_initial 			= new HashMap<>();
 
-
+	private Map<LifecycleControlListener,GlobalManagerDownloadWillBeRemovedListener>	lcl_map = new HashMap<>();
+	
 	private int							next_seed_piece_recheck_index;
 
 	private final TorrentFolderWatcher torrent_folder_watcher;
@@ -273,6 +276,9 @@ public class GlobalManagerImpl
 	private boolean seeding_only_mode 				= false;
 	private boolean potentially_seeding_only_mode	= false;
 
+	private final 	AllTrackers	all_trackers = AllTrackersManager.getAllTrackers();
+	private long	all_trackers_options_mut = all_trackers.getOptionsMutationCount();
+	
 	private final FrequencyLimitedDispatcher	check_seeding_only_state_dispatcher =
 		new FrequencyLimitedDispatcher(
 			new AERunnable(){ @Override
@@ -1658,6 +1664,11 @@ public class GlobalManagerImpl
 
 	  canDownloadManagerBeRemoved( manager, remove_torrent, remove_data );
 
+	  if ( ds_tagger != null ){
+	  
+		  ds_tagger.removeInitiated( manager );
+	  }
+	  
 	  manager.stopIt(DownloadManager.STATE_STOPPED, remove_torrent, remove_data, true );
 
 	  synchronized( managers_lock ){
@@ -3412,6 +3423,67 @@ public class GlobalManagerImpl
 			dm.requestAttention();
 		}
 	}
+	
+	@Override
+	public void 
+	addLifecycleControlListener(
+		LifecycleControlListener l )
+	{
+		synchronized( lcl_map ){
+			
+			if ( lcl_map.containsKey( l )){
+				
+				Debug.out( "Listener already added" );
+			}
+			
+			GlobalManagerDownloadWillBeRemovedListener gl = 
+				new GlobalManagerDownloadWillBeRemovedListener(){
+					
+					@Override
+					public void 
+					downloadWillBeRemoved(
+						DownloadManager manager, 
+						boolean remove_torrent, 
+						boolean remove_data )
+					
+						throws GlobalManagerDownloadRemovalVetoException
+					{
+				
+						try{
+							l.canTaggableBeRemoved( manager );
+							
+						}catch( Throwable e ){
+							
+							throw( new GlobalManagerDownloadRemovalVetoException( Debug.getNestedExceptionMessage( e )));
+						}
+					}
+				};
+				
+			lcl_map.put( l, gl );
+			
+			addDownloadWillBeRemovedListener( gl );
+		}
+	}
+	
+	@Override
+	public void 
+	removeLifecycleControlListener(
+		LifecycleControlListener l )
+	{
+		synchronized( lcl_map ){
+			
+			GlobalManagerDownloadWillBeRemovedListener gl = lcl_map.remove( l );
+			
+			if ( gl == null ){
+				
+				Debug.out( "Listener not found" );
+				
+			}else{
+				
+				removeDownloadWillBeRemovedListener( gl );
+			}
+		}
+	}
 
   protected void  informDestroyed() {
   		if ( destroyed )
@@ -3655,6 +3727,14 @@ public class GlobalManagerImpl
     boolean seeding_set 			= false;
     boolean	potentially_seeding	= false;
 
+    long curr_mut = all_trackers.getOptionsMutationCount();
+    
+    boolean full_sync = curr_mut != all_trackers_options_mut;
+    
+    if ( full_sync ){
+    	all_trackers_options_mut = curr_mut;
+    }
+    
 	  DownloadManager[] managers = managers_list_cow;
 
 	  for( DownloadManager manager: managers ){
@@ -3671,6 +3751,8 @@ public class GlobalManagerImpl
 
         		if ( manager.isDownloadComplete( false )){
 
+        			manager.checkLightSeeding( full_sync );
+        			
         			potentially_seeding = true;
         		} else {
 
@@ -4547,12 +4629,15 @@ public class GlobalManagerImpl
 		private final TagDownloadWithState	tag_inactive;
 		private final TagDownloadWithState	tag_complete;
 		private final TagDownloadWithState	tag_incomplete;
-
 		private final TagDownloadWithState	tag_moving;
 		private final TagDownloadWithState	tag_checking;
-
+		private final TagDownloadWithState	tag_deleting;
 		private final TagDownloadWithState	tag_paused;
+		
+			// extends the above and you need to extend derived_tags below...
 
+		private final TagDownloadWithState[]	derived_tags;
+		
 		int user_mode = -1;
 
 		{
@@ -4599,7 +4684,19 @@ public class GlobalManagerImpl
 			tag_incomplete			= new MyTag( 11, "tag.type.ds.incomp", true, true, true, true, TagFeatureRunState.RSC_START_STOP_PAUSE );
 			tag_moving				= new MyTag( 12, "tag.type.ds.mov", false, false, false, false, TagFeatureRunState.RSC_STOP_PAUSE );
 			tag_checking			= new MyTag( 13, "tag.type.ds.chk", false, false, false, false, TagFeatureRunState.RSC_STOP_PAUSE );
+			tag_deleting			= new MyTag( 14, "tag.type.ds.del", false, false, false, false, TagFeatureRunState.RSC_NONE );
 
+			derived_tags = new TagDownloadWithState[]{
+					tag_active,
+					tag_inactive,
+					tag_complete,
+					tag_incomplete,
+					tag_moving,
+					tag_checking,
+					tag_deleting,
+					tag_paused,
+			};
+			
 			if ( tag_active.isColorDefault()){
 				tag_active.setColor( new int[]{ 96, 160, 96 });
 			}
@@ -4907,6 +5004,13 @@ public class GlobalManagerImpl
 		}
 
 		void
+		removeInitiated(
+			DownloadManager		manager )
+		{
+			tag_deleting.addTaggable( manager );
+		}
+		
+		void
 		remove(
 			DownloadManager		manager )
 		{
@@ -4919,27 +5023,12 @@ public class GlobalManagerImpl
 
 			synchronized( this ){
 
-				if ( tag_active.hasTaggable( manager )){
+				for ( TagDownloadWithState tag: derived_tags ){
+					
+					if ( tag.hasTaggable( manager )){
 
-					tag_active.removeTaggable( manager );
-
-				}else{
-
-					tag_inactive.removeTaggable( manager );
-				}
-
-				if ( tag_complete.hasTaggable( manager )){
-
-					tag_complete.removeTaggable( manager );
-
-				}else{
-
-					tag_incomplete.removeTaggable( manager );
-				}
-
-				if ( tag_paused.hasTaggable( manager )){
-
-					tag_paused.removeTaggable( manager );
+						tag.removeTaggable( manager );
+					}
 				}
 			}
 		}

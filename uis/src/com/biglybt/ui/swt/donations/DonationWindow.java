@@ -20,27 +20,29 @@
 
 package com.biglybt.ui.swt.donations;
 
+import java.util.Calendar;
+import java.util.Date;
+
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.internat.MessageText;
+import com.biglybt.core.stats.transfer.LongTermStats;
 import com.biglybt.core.stats.transfer.OverallStats;
 import com.biglybt.core.stats.transfer.StatsFactory;
 import com.biglybt.core.util.*;
 import com.biglybt.ui.swt.BrowserWrapper;
+import com.biglybt.ui.swt.Messages;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.components.shell.ShellFactory;
 import com.biglybt.ui.swt.shells.MessageBoxShell;
+import com.biglybt.ui.swt.utils.FontUtils;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.browser.TitleEvent;
-import org.eclipse.swt.browser.TitleListener;
-import org.eclipse.swt.browser.LocationListener;
-import org.eclipse.swt.browser.LocationEvent;
-import org.eclipse.swt.events.DisposeEvent;
-import org.eclipse.swt.events.DisposeListener;
-import org.eclipse.swt.events.TraverseEvent;
-import org.eclipse.swt.events.TraverseListener;
+import org.eclipse.swt.browser.*;
+import org.eclipse.swt.events.*;
 import org.eclipse.swt.graphics.Rectangle;
-import org.eclipse.swt.layout.FillLayout;
+import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 
 /**
@@ -62,6 +64,8 @@ public class DonationWindow
 	static Shell shell = null;
 
 	static BrowserWrapper.BrowserFunction browserFunction;
+
+	private static int extraHeight;
 
 	public static void 
 	checkForDonationPopup() 
@@ -173,7 +177,7 @@ public class DonationWindow
 		final Shell parentShell = Utils.findAnyShell();
 		shell = ShellFactory.createShell(parentShell,
 				SWT.DIALOG_TRIM | SWT.APPLICATION_MODAL);
-		shell.setLayout(new FillLayout());
+		shell.setLayout(new GridLayout(1, true));
 		if (parentShell != null) {
 			parentShell.setCursor(shell.getDisplay().getSystemCursor(SWT.CURSOR_WAIT));
 		}
@@ -201,12 +205,48 @@ public class DonationWindow
 			}
 		});
 
+		LongTermStats lt_stats = StatsFactory.getLongTermStats();
+		if (lt_stats != null) {
+			Label label = new Label(shell, SWT.NONE);
+			FontUtils.setFontHeight(label, 13, SWT.BOLD);
+			label.setLayoutData(new GridData(SWT.CENTER, SWT.CENTER, true, false));
+			extraHeight = label.computeSize(-1, -1).y;
+			new AEThread2("YearStats", true) {
+				@Override
+				public void run() {
+					Calendar calendar = Calendar.getInstance();
+					// Show previous year for Jan, Feb
+					calendar.add(Calendar.MONTH, -2);
+					int year = calendar.get(Calendar.YEAR);
+					calendar.set(year, Calendar.JANUARY, 1, 0, 0, 0);
+					calendar.set(Calendar.MILLISECOND, 0);
+					Date startDate = calendar.getTime();
+					calendar.set(Calendar.YEAR, year + 1);
+					calendar.add(Calendar.SECOND, -1);
+					Date endDate = calendar.getTime();
+					long[] stats = lt_stats.getTotalUsageInPeriod(startDate, endDate);
+					long ulBytes = stats[0] + stats[1] + stats[4];
+					long dlBytes = stats[2] + stats[3] + stats[5];
+					Utils.execSWTThread(() -> {
+						if (label.isDisposed()) {
+							return;
+						}
+						Messages.setLanguageText(label, "DonateWindow.YearStats", "" + year,
+								DisplayFormatters.formatByteCountToKiBEtc(dlBytes),
+								DisplayFormatters.formatByteCountToKiBEtc(ulBytes));
+						label.requestLayout();
+					});
+				}
+			}.start();
+		}
+
 		BrowserWrapper browser = Utils.createSafeBrowser(shell, SWT.NONE);
 		if (browser == null) {
 			shell.dispose();
 			return;
 		}
-
+		browser.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+		
 		browser.addTitleListener(new TitleListener() {
 			@Override
 			public void changed(TitleEvent event) {
@@ -282,7 +322,7 @@ public class DonationWindow
 						if (strings.length > 2) {
 							try {
 								int w = Integer.parseInt(strings[1]);
-								int h = Integer.parseInt(strings[2]);
+								int h = Integer.parseInt(strings[2]) + extraHeight;
 
 								Rectangle computeTrim = shell.computeTrim(0, 0, w, h);
 								shell.setSize(computeTrim.width, computeTrim.height);

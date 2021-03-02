@@ -159,7 +159,7 @@ public class ProgressPanel extends AbstractWizardPanel<NewTorrentWizard> impleme
 
     if( tracker_type == NewTorrentWizard.TT_EXTERNAL ){
 
-      TrackersUtil.getInstance().addTracker(wizard.trackerURL);
+      TrackersUtil.getInstance().addTracker(wizard.getTrackerURL());
     }
 
     File f;
@@ -173,7 +173,7 @@ public class ProgressPanel extends AbstractWizardPanel<NewTorrentWizard> impleme
     }
 
     try {
-      URL url = new URL(wizard.trackerURL);
+      URL url = new URL(wizard.getTrackerURL());
 
       final TOTorrent torrent;
 
@@ -203,6 +203,13 @@ public class ProgressPanel extends AbstractWizardPanel<NewTorrentWizard> impleme
 
       TorrentUtils.setPrivate( torrent, wizard.getPrivateTorrent());	// this will change the hash so do it before setting the URL!  	
 
+      String source = wizard.getSource();
+      
+      if ( source != null && !source.isEmpty()){
+    	  
+    	  torrent.setSource( source );
+      }
+      
       if ( tracker_type == NewTorrentWizard.TT_DECENTRAL ){
 
       	TorrentUtils.setDecentralised( torrent );

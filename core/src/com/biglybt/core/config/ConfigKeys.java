@@ -30,6 +30,7 @@ public final class ConfigKeys {
 		public static final String ICFG_BACKUP_AUTO_RETAIN = "br.backup.auto.retain";
 		public static final String BCFG_BACKUP_NOTIFY = "br.backup.notify";
 		public static final String BCFG_RESTORE_AUTOPAUSE = "br.restore.autopause";
+		public static final String BCFG_BACKUP_PLUGINS = "br.restore.doplugins";
 	}
 
 	public static class Connection {
@@ -50,6 +51,7 @@ public final class ConfigKeys {
 		public static final String ICFG_HTTP_DATA_LISTEN_PORT = "HTTP.Data.Listen.Port";
 		public static final String ICFG_HTTP_DATA_LISTEN_PORT_OVERRIDE = "HTTP.Data.Listen.Port.Override";
 		public static final String BCFG_WEBSEED_ACTIVATION_USES_AVAILABILITY = "webseed.activation.uses.availability";
+		public static final String BCFG_WEBSEED_ACTIVATION_MIN_SPEED_KBPS = "webseed.activation.min.speed.kbps";
 		public static final String BCFG_PREFIX_PEER_SRC_SELECTION_DEF = "Peer Source Selection Default.";
 		public static final String BCFG_PREFIX_NETWORK_SELECTION_DEF = "Network Selection Default.";
 		public static final String BCFG_NETWORK_SELECTION_PROMPT = "Network Selection Prompt";
@@ -111,6 +113,7 @@ public final class ConfigKeys {
 		public static final String SCFG_DEFAULT_SAVE_PATH = "Default save path";
 		public static final String BCFG_UI_ADDTORRENT_OPENOPTIONS_SEP = "ui.addtorrent.openoptions.sep";
 		public static final String BCFG_DEFAULT_DIR_AUTO_SAVE_AUTO_RENAME = "DefaultDir.AutoSave.AutoRename";
+		public static final String ICFG_UI_ADDTORRENT_OPENOPTIONS_AUTO_CLOSE_SECS = "ui.addtorrent.openoptions.auto.close.secs";
 		public static final String BCFG_DEFAULT_DIR_AUTO_UPDATE = "DefaultDir.AutoUpdate";
 		public static final String ICFG_SAVE_TO_LIST_MAX_ENTRIES = "saveTo_list.max_entries";
 		public static final String SCFG_SAVE_TO_LIST = "saveTo_list";
@@ -180,6 +183,7 @@ public final class ConfigKeys {
 		public static final String BCFG_FILE_MOVE_DOWNLOAD_REMOVED_ONLY_IN_DEFAULT = "File.move.download.removed.only_in_default";
 		public static final String BCFG_FILE_MOVE_DOWNLOAD_REMOVED_MOVE_PARTIAL = "File.move.download.removed.move_partial";
 		public static final String BCFG_FILE_USE_TEMP_AND_MOVE_ENABLE = "file.use.temp.path.and.move.enable";
+		public static final String BCFG_FILE_MOVE_ORIGIN_DELETE_FAIL_IS_WARNING = "Fail To Delete Origin File After Move Is Warning";
 		public static final String SCFG_FILE_USE_TEMP_AND_MOVE_PATH = "file.use.temp.path.and.move.path";
 		public static final String BCFG_COPY_AND_DELETE_DATA_RATHER_THAN_MOVE = "Copy And Delete Data Rather Than Move";
 		public static final String ICFG_DISKMANAGER_PERF_CACHE_NOTSMALLERTHAN = "diskmanager.perf.cache.notsmallerthan";
@@ -189,6 +193,7 @@ public final class ConfigKeys {
 		public static final String BCFG_DISKMANAGER_PERF_CACHE_TRACE = "diskmanager.perf.cache.trace";
 		public static final String ICFG_DISKMANAGER_HASHCHECKING_STRATEGY = "diskmanager.hashchecking.strategy";
 		public static final String BCFG_DISKMANAGER_HASHCHECKING_SMALLESTFIRST = "diskmanager.hashchecking.smallestfirst";
+		public static final String BCFG_DISKMANAGER_ONE_OP_PER_FS = "diskmanager.one.op.per.fs";
 		public static final String BCFG_DISKMANAGER_HASHCHECKING_MAX_ACTIVE = "diskmanager.hashchecking.maxactive";
 		public static final String BCFG_DISKMANAGER_PERF_CACHE_ENABLE = "diskmanager.perf.cache.enable";
 		public static final String ICFG_DISKMANAGER_PERF_CACHE_SIZE = "diskmanager.perf.cache.size";
@@ -232,6 +237,7 @@ public final class ConfigKeys {
 		public static final String FCFG_IP_FILTER_BAN_DISCARD_RATIO = "Ip Filter Ban Discard Ratio";
 		public static final String ICFG_IP_FILTER_BAN_DISCARD_MIN_KB = "Ip Filter Ban Discard Min KB";
 		public static final String ICFG_IP_FILTER_BAN_BLOCK_LIMIT = "Ip Filter Ban Block Limit";
+		public static final String BCFG_IP_FILTER_DONT_BAN_LAN = "Ip Filter Dont Ban LAN";
 		public static final String ICFG_IP_FILTER_AUTOLOAD_DAYS = "Ip Filter Autoload Days";
 		public static final String ICFG_IP_FILTER_AUTOLOAD_LAST = "Ip Filter Autoload Last Date";
 		public static final String SCFG_IP_FILTER_AUTOLOAD_FILE = "Ip Filter Autoload File";

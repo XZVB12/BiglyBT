@@ -27,7 +27,7 @@ import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.disk.*;
 import com.biglybt.core.disk.impl.DiskManagerFileInfoImpl;
 import com.biglybt.core.disk.impl.DiskManagerImpl;
-import com.biglybt.core.disk.impl.DiskManagerRecheckInstance;
+import com.biglybt.core.disk.impl.DiskManagerRecheckScheduler.DiskManagerRecheckInstance;
 import com.biglybt.core.disk.impl.access.DMChecker;
 import com.biglybt.core.disk.impl.piecemapper.DMPieceList;
 import com.biglybt.core.disk.impl.piecemapper.DMPieceMapEntry;
@@ -140,12 +140,8 @@ RDResumeHandler
 	{
 		//long	start = System.currentTimeMillis();
 
-		DiskManagerRecheckInstance	recheck_inst = disk_manager.getRecheckScheduler().register( disk_manager, false );
-			
-		int concurrency = recheck_inst.getPieceConcurrency();
-		
-        final AESemaphore	 run_sem = new AESemaphore( "RDResumeHandler::checkAllPieces:runsem", concurrency );
-
+		DiskManagerRecheckInstance	recheck_inst_maybe_null = null;
+			 
         final List<DiskManagerCheckRequest>	failed_pieces = new ArrayList<>();
 
         listener.percentDone( 0 );
@@ -405,9 +401,18 @@ RDResumeHandler
 							if(pieceCannotExist)
 							{
 								dm_piece.setDone( false );
+								
 							} else if ( piece_state == PIECE_RECHECK_REQUIRED || !resumeValid ){
+								
 
-								run_sem.reserve();
+								if ( recheck_inst_maybe_null == null ){
+									
+									recheck_inst_maybe_null = disk_manager.getRecheckScheduler().register( disk_manager, false );
+								}
+								
+								final DiskManagerRecheckInstance recheck_inst = recheck_inst_maybe_null;
+								
+								recheck_inst.reserveSlot();
 
 								while( !stopped ){
 
@@ -478,7 +483,7 @@ RDResumeHandler
 												protected void
 												complete()
 												{
-													run_sem.release();
+													recheck_inst.releaseSlot();
 
 													pending_checks_sem.release();
 												}
@@ -562,13 +567,21 @@ RDResumeHandler
 							}
 						}
 						
-						if(pieceCannotExist)
-						{
+						if ( pieceCannotExist ){
+						
 							disk_manager.getPiece(i).setDone(false);
+							
 							continue;
 						}
 
-						run_sem.reserve();
+						if ( recheck_inst_maybe_null == null ){
+							
+							recheck_inst_maybe_null = disk_manager.getRecheckScheduler().register( disk_manager, false );
+						}
+						
+						final DiskManagerRecheckInstance recheck_inst = recheck_inst_maybe_null;
+
+						recheck_inst.reserveSlot();
 
 						while( ! stopped ){
 
@@ -639,8 +652,8 @@ RDResumeHandler
 										protected void
 										complete()
 										{
-											run_sem.release();
-
+											recheck_inst.releaseSlot();
+											
 											pending_checks_sem.release();
 										}
 									});
@@ -676,12 +689,17 @@ RDResumeHandler
 							hash_map.put( hash, i );
 						}
 					}
+					
+					if ( recheck_inst_maybe_null == null ){
+						
+						recheck_inst_maybe_null = disk_manager.getRecheckScheduler().register( disk_manager, false );
+					}
 
 					for ( DiskManagerCheckRequest request: failed_pieces ){
 
 						while( ! stopped ){
 
-							if ( recheck_inst.getPermission()){
+							if ( recheck_inst_maybe_null.getPermission()){
 
 								break;
 							}
@@ -843,7 +861,10 @@ RDResumeHandler
 
 		}finally{
 
-			recheck_inst.unregister();
+			if ( recheck_inst_maybe_null != null ){
+			
+				recheck_inst_maybe_null.unregister();
+			}
 
 			// System.out.println( "Check of '" + disk_manager.getDownloadManager().getDisplayName() + "' completed in " + (System.currentTimeMillis() - start));
 		}
@@ -1239,7 +1260,23 @@ RDResumeHandler
 		return pivot;
 	}
 
-	public static boolean fileMustExist(DownloadManager download_manager, DiskManagerFileInfo file) {
+	/**
+	 * @deprecated Kept for xmwebui 
+	 */
+	public static boolean
+	fileMustExist(
+		DownloadManager 			download_manager,
+		DiskManagerFileInfo 		file)
+	{
+		return fileMustExist(download_manager, download_manager.getDiskManagerFileInfoSet(), file);
+	}
+
+	public static boolean 
+	fileMustExist(
+		DownloadManager 			download_manager,
+		DiskManagerFileInfoSet		fileSet,
+		DiskManagerFileInfo 		file) 
+	{
 
 		Map resumeData = getResumeData( download_manager );
 
@@ -1247,7 +1284,7 @@ RDResumeHandler
 
 		boolean sharesAnyNeededPieces = false;
 
-		DiskManagerFileInfo[] files = download_manager.getDiskManagerFileInfo();
+		DiskManagerFileInfo[] files = fileSet.getFiles();
 		int firstPiece = file.getFirstPieceNumber();
 		int lastPiece = file.getLastPieceNumber();
 

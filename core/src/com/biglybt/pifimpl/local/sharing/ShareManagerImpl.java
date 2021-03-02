@@ -113,6 +113,8 @@ ShareManagerImpl
 
 	private Map<String,ShareResourceImpl>	shares 		= new HashMap<>();
 
+	private ByteArrayHashMap<ShareResource>	torrent_map	= new ByteArrayHashMap<>();
+	
 	private shareScanner		current_scanner;
 	private boolean				scanning;
 
@@ -152,6 +154,85 @@ ShareManagerImpl
 
 					initialised		= true;
 
+					listeners.add(
+						new ShareManagerListener(){
+							
+							@Override
+							public void resourceModified(ShareResource old_resource, ShareResource new_resource){
+							}
+							
+							@Override
+							public void 
+							resourceDeleted(
+								ShareResource resource)
+							{
+								handleResource( resource, false );								
+							}
+							
+							@Override
+							public void 
+							resourceAdded(
+								ShareResource resource)
+							{
+								handleResource( resource, true );								
+							}
+							
+							private void
+							handleResource(
+								ShareResource		resource,
+								boolean				added )
+							{
+								try{
+									Torrent torrent = null;
+	
+									int type = resource.getType();
+									
+									if ( type == ShareResource.ST_FILE ){
+	
+										ShareResourceFile	file_resource = (ShareResourceFile)resource;
+	
+										ShareItem	item = file_resource.getItem();
+	
+										torrent = item.getTorrent();
+	
+									}else if ( type == ShareResource.ST_DIR ){
+	
+										ShareResourceDir	dir_resource = (ShareResourceDir)resource;
+	
+										ShareItem	item = dir_resource.getItem();
+	
+										torrent = item.getTorrent();
+									}
+									
+									if ( torrent != null ){
+										
+										synchronized( torrent_map ){
+										
+											if ( added ){
+											
+												torrent_map.put( torrent.getHash(), resource );
+												
+											}else{
+												
+												torrent_map.remove( torrent.getHash());
+											}
+										}
+									}
+								}catch( Throwable e ){
+									
+									Debug.out( e );
+								}
+
+							}
+							@Override
+							public void reportProgress(int percent_complete){
+							}
+							
+							@Override
+							public void reportCurrentTask(String task_description){
+							}
+						});
+					
 					share_dir = FileUtil.getUserFile( TORRENT_STORE );
 
 					FileUtil.mkdirs(share_dir);
@@ -278,7 +359,17 @@ ShareManagerImpl
 	{
 			// copy set for iteration as consistency check can delete resource
 
-		Iterator<ShareResourceImpl>	it = new HashSet<>(shares.values()).iterator();
+		Iterator<ShareResourceImpl>	it;
+		
+		try{
+			this_mon.enter();
+			
+			it = new HashSet<>(shares.values()).iterator();
+			
+		}finally{
+			
+			this_mon.exit();
+		}
 
 		while(it.hasNext()){
 
@@ -315,6 +406,8 @@ ShareManagerImpl
 
 			if ( new_resource != null ){
 
+					// monitor already held
+				
 				ShareResourceImpl	old_resource = shares.get(new_resource.getName());
 
 				if ( old_resource != null ){
@@ -492,11 +585,19 @@ ShareManagerImpl
 	public ShareResource[]
 	getShares()
 	{
-		ShareResource[]	res = new ShareResource[shares.size()];
+		try{
+			this_mon.enter();
+		
+			ShareResource[]	res = new ShareResource[shares.size()];
 
-		shares.values().toArray( res );
+			shares.values().toArray( res );
 
-		return( res );
+			return( res );
+			
+		}finally{
+			
+			this_mon.exit();
+		}
 	}
 
 	@Override
@@ -513,11 +614,17 @@ ShareManagerImpl
 		throws ShareException
 	{
 		try{
+			this_mon.enter();
+			
 			return((ShareResourceImpl)shares.get(file.getCanonicalFile().toString()));
 
 		}catch( IOException e ){
 
 			throw( new ShareException( "getCanonicalFile fails", e ));
+			
+		}finally{
+			
+			this_mon.exit();
 		}
 	}
 
@@ -534,24 +641,25 @@ ShareManagerImpl
 			return( null );
 		}
 	}
-
+	
 	@Override
 	public ShareResource 
-	lookupShare(byte[] torrent_hash) 
+	lookupShare(
+		byte[] torrent_hash ) 
 			
 		throws ShareException
 	{
-		for ( ShareResourceImpl	sr: shares.values()){
+		if ( !initialised ){
+		
+				// need to force this in order to populate the torrent map
 			
-			ShareResource x = sr.lookupShare( torrent_hash );
-			
-			if ( x != null ){
-				
-				return( x );
-			}
+			initialise();
 		}
 		
-		return( null );
+		synchronized( torrent_map ){
+			
+			return( torrent_map.get( torrent_hash ));
+		}
 	}
 	
 	private boolean
